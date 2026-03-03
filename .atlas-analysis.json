@@ -1,0 +1,95 @@
+{
+  "projectType": "framework",
+  "projectName": "Buildr",
+  "projectDescription": "A Python framework for building OCI-compatible, unprivileged ML containers on Kubernetes",
+  "theme": "aspen",
+  "primaryColor": "#2563EB",
+  "lightColor": "#3B82F6",
+  "darkColor": "#1E40AF",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/containerization",
+              "concepts/builders",
+              "concepts/runners"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/basic-usage",
+              "guides/advanced-configuration",
+              "guides/kubernetes-deployment",
+              "guides/custom-dockerfiles"
+            ]
+          },
+          {
+            "group": "Examples",
+            "pages": [
+              "examples/simple-app",
+              "examples/web-service",
+              "examples/ml-workload"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core API",
+            "pages": [
+              "api/containerize",
+              "api/package-options",
+              "api/runtime-options"
+            ]
+          },
+          {
+            "group": "Builders",
+            "pages": [
+              "api/builders/docker-builder"
+            ]
+          },
+          {
+            "group": "Runners",
+            "pages": [
+              "api/runners/docker-runner",
+              "api/runners/metaparticle-runner"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Decorator-based containerization for Python applications",
+    "Automatic Dockerfile generation",
+    "Support for Docker and Kubernetes deployment",
+    "Configurable build and runtime options",
+    "Unprivileged container builds",
+    "Integration with Metaparticle for advanced orchestration"
+  ],
+  "publicApiSurface": [
+    "@Containerize decorator",
+    "PackageOptions (repository, name, builder, publish, verbose, quiet, py_version, dockerfile)",
+    "RuntimeOptions (executor, replicas, ports, public, shardSpec, jobSpec)",
+    "DockerBuilder.build()",
+    "DockerBuilder.publish()",
+    "DockerRunner.run()",
+    "MetaparticleRunner.run()"
+  ]
+}
