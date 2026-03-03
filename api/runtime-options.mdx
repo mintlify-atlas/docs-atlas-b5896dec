@@ -61,7 +61,7 @@ RuntimeOptions(
 #### Basic Runtime
 
 ```python
-from buildr_pkg.containerize import Containerize
+from metaparticle_pkg.containerize import Containerize
 
 @Containerize(
     runtime={
@@ -153,7 +153,7 @@ ShardSpec(
 ### Usage
 
 ```python
-from buildr_pkg.option import ShardSpec
+from metaparticle_pkg.option import ShardSpec
 
 shard_config = ShardSpec(
     shards=8,
@@ -196,7 +196,7 @@ JobSpec(iterations=0)
 ### Usage
 
 ```python
-from buildr_pkg.option import JobSpec
+from metaparticle_pkg.option import JobSpec
 
 job_config = JobSpec(iterations=5)
 

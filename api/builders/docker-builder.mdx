@@ -10,7 +10,7 @@ The `DockerBuilder` class provides functionality to build Docker images from a D
 ## Constructor
 
 ```python
-from buildr_pkg.builder.docker_builder import DockerBuilder
+from metaparticle_pkg.builder.docker_builder import DockerBuilder
 
 builder = DockerBuilder()
 ```
@@ -55,7 +55,7 @@ If the Docker daemon returns an error during the build process, the method:
 #### Example
 
 ```python
-from buildr_pkg.builder.docker_builder import DockerBuilder
+from metaparticle_pkg.builder.docker_builder import DockerBuilder
 
 builder = DockerBuilder()
 
@@ -99,7 +99,7 @@ Note: Authentication with the registry must be configured separately (e.g., via 
 #### Example
 
 ```python
-from buildr_pkg.builder.docker_builder import DockerBuilder
+from metaparticle_pkg.builder.docker_builder import DockerBuilder
 
 builder = DockerBuilder()
 
@@ -111,7 +111,7 @@ builder.publish('username/myapp:latest')
 ## Complete Usage Example
 
 ```python
-from buildr_pkg.builder.docker_builder import DockerBuilder
+from metaparticle_pkg.builder.docker_builder import DockerBuilder
 
 # Create a builder instance
 builder = DockerBuilder()

@@ -23,7 +23,7 @@ Use `MetaparticleRunner` when you:
 Initializes a new Metaparticle runner instance.
 
 ```python
-from buildr_pkg.runner import MetaparticleRunner
+from metaparticle_pkg.runner import MetaparticleRunner
 
 runner = MetaparticleRunner()
 ```
@@ -94,7 +94,7 @@ runner.run(img, name, options)
 **Example - Service Deployment:**
 
 ```python
-from buildr_pkg.runner import MetaparticleRunner
+from metaparticle_pkg.runner import MetaparticleRunner
 
 class Options:
     replicas = 3
@@ -114,7 +114,7 @@ runner.run(
 **Example - Job Deployment:**
 
 ```python
-from buildr_pkg.runner import MetaparticleRunner
+from metaparticle_pkg.runner import MetaparticleRunner
 
 class Options:
     replicas = 0
@@ -232,7 +232,7 @@ port_specs = runner.ports([8080, 8443])
 ### Simple Web Service
 
 ```python
-from buildr_pkg.runner import MetaparticleRunner
+from metaparticle_pkg.runner import MetaparticleRunner
 
 class Options:
     replicas = 2
@@ -252,7 +252,7 @@ runner.run(
 ### Sharded Service with Multiple Ports
 
 ```python
-from buildr_pkg.runner import MetaparticleRunner
+from metaparticle_pkg.runner import MetaparticleRunner
 
 class Options:
     replicas = 5
@@ -275,7 +275,7 @@ runner.run(
 ### Batch Job Processing
 
 ```python
-from buildr_pkg.runner import MetaparticleRunner
+from metaparticle_pkg.runner import MetaparticleRunner
 
 class Options:
     replicas = 0
@@ -297,7 +297,7 @@ runner.run(
 ### Internal Service (Not Public)
 
 ```python
-from buildr_pkg.runner import MetaparticleRunner
+from metaparticle_pkg.runner import MetaparticleRunner
 
 class Options:
     replicas = 3
@@ -317,7 +317,7 @@ runner.run(
 ## Complete Workflow Example
 
 ```python
-from buildr_pkg.runner import MetaparticleRunner
+from metaparticle_pkg.runner import MetaparticleRunner
 import time
 
 class Options:

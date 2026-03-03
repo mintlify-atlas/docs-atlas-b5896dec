@@ -22,7 +22,7 @@ Use `DockerRunner` when you:
 Initializes a new Docker runner instance.
 
 ```python
-from buildr_pkg.runner import DockerRunner
+from metaparticle_pkg.runner import DockerRunner
 
 runner = DockerRunner()
 ```
@@ -71,7 +71,7 @@ runner.run(img, name, options)
 **Example:**
 
 ```python
-from buildr_pkg.runner import DockerRunner
+from metaparticle_pkg.runner import DockerRunner
 
 class Options:
     ports = [8080, 5000]
@@ -151,7 +151,7 @@ runner.cancel("myapp")
 ### Basic Container Without Ports
 
 ```python
-from buildr_pkg.runner import DockerRunner
+from metaparticle_pkg.runner import DockerRunner
 
 class Options:
     ports = None
@@ -167,7 +167,7 @@ runner.run(
 ### Web Application with Multiple Ports
 
 ```python
-from buildr_pkg.runner import DockerRunner
+from metaparticle_pkg.runner import DockerRunner
 
 class Options:
     ports = [8080, 8443]  # HTTP and HTTPS
@@ -187,7 +187,7 @@ print("HTTPS: https://localhost:8443")
 ### Complete Workflow Example
 
 ```python
-from buildr_pkg.runner import DockerRunner
+from metaparticle_pkg.runner import DockerRunner
 import logging
 
 # Set up logging to see container output

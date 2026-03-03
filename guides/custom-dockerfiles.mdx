@@ -1,13 +1,13 @@
 ---
 title: Custom Dockerfiles
-description: Use custom Dockerfiles instead of auto-generated ones for advanced build requirements
+description: Understanding Buildr's Dockerfile generation and current limitations
 ---
 
-While Buildr automatically generates Dockerfiles for simple use cases, you can provide your own Dockerfile for advanced build requirements, multi-stage builds, or complex dependency management.
+Buildr automatically generates Dockerfiles for containerizing Python applications. This guide explains how the auto-generation works and current limitations regarding custom Dockerfiles.
 
 ## Default Auto-Generated Dockerfile
 
-By default, Buildr creates a simple Dockerfile based on your configuration:
+Buildr creates a simple Dockerfile based on your `PackageOptions` configuration:
 
 ```dockerfile
 FROM python:{version}-alpine
@@ -24,332 +24,120 @@ The template uses:
 
 Source reference: containerize.py:38-45
 
+### How It Works
+
+When you decorate a function with `@Containerize`:
+
+<Steps>
+  <Step title="Container detection">
+    Buildr checks if it's already running inside a container using `/proc/1/cgroup` and the `METAPARTICLE_IN_CONTAINER` environment variable.
+  </Step>
+  
+  <Step title="Dockerfile generation">
+    If not in a container, Buildr calls `write_dockerfile()` to generate the Dockerfile with your configured Python version and script name.
+  </Step>
+  
+  <Step title="Image build">
+    The DockerBuilder uses the Docker API to build the image from the generated Dockerfile.
+  </Step>
+  
+  <Step title="Optional publish">
+    If `publish=True`, the image is pushed to the container registry.
+  </Step>
+  
+  <Step title="Container execution">
+    The runner starts a container from the built image.
+  </Step>
+</Steps>
+
 ### Limitations of Auto-Generation
 
 The default Dockerfile works well for simple applications but has limitations:
 
-- Uses Alpine Linux (small but may have compatibility issues)
-- Installs all dependencies from `requirements.txt` without caching optimization
+- Uses Alpine Linux (small but may have compatibility issues with some Python packages)
+- Installs all dependencies from `requirements.txt` without layer caching optimization
 - No support for system packages (apt, apk)
 - No multi-stage builds
 - No custom build arguments or environment variables
-- Limited to Python applications
+- No custom base images
+- Requires `requirements.txt` at project root
 
-## Using a Custom Dockerfile
-
-To use your own Dockerfile, add the `dockerfile` parameter to `PackageOptions`:
-
-```python
-from metaparticle_pkg import Containerize
-
-@Containerize(
-    package={
-        'repository': 'myusername',
-        'name': 'my-app',
-        'dockerfile': './Dockerfile'  # Path to your custom Dockerfile
-    }
-)
-def main():
-    print("Using custom Dockerfile!")
-
-if __name__ == '__main__':
-    main()
-```
-
-<Tip>
-The `dockerfile` parameter accepts any valid file path. Buildr copies your Dockerfile to the build context before building.
-</Tip>
-
-Source reference: containerize.py:33-36
-
-## Custom Dockerfile Examples
-
-### Example 1: Multi-Stage Build
-
-Optimize image size with multi-stage builds:
-
-```dockerfile
-# Build stage
-FROM python:3.11-slim as builder
-
-WORKDIR /app
-
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    python3-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
-
-# Runtime stage
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Copy only the installed packages from builder
-COPY --from=builder /root/.local /root/.local
-COPY . .
-
-# Make sure scripts in .local are usable
-ENV PATH=/root/.local/bin:$PATH
-
-CMD ["python", "app.py"]
-```
-
-```python
-@Containerize(
-    package={
-        'repository': 'myusername',
-        'name': 'optimized-app',
-        'dockerfile': './Dockerfile'
-    }
-)
-def main():
-    # Your application code
-    pass
-```
-
-### Example 2: System Dependencies
-
-Install system packages required by your application:
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    postgresql-client \
-    libpq-dev \
-    curl \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application code
-COPY . .
-
-# Create non-root user
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
-USER appuser
-
-CMD ["python", "app.py"]
-```
-
-```python
-@Containerize(
-    package={
-        'repository': 'myusername',
-        'name': 'postgres-app',
-        'dockerfile': './Dockerfile'
-    },
-    runtime={'ports': [5000]}
-)
-def main():
-    import psycopg2
-    # Your database application
-    pass
-```
-
-### Example 3: Layer Caching Optimization
-
-Maximize Docker layer caching for faster rebuilds:
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Copy only requirements first (cached unless requirements change)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application code (changes frequently, cached separately)
-COPY . .
-
-CMD ["python", "app.py"]
-```
+## Custom Dockerfile Support
 
 <Warning>
-The auto-generated Dockerfile copies all files first, then installs dependencies. This invalidates the cache on any file change. Custom Dockerfiles let you optimize caching.
+**Current Limitation**: Custom Dockerfiles are **not currently supported** in Buildr. While the `PackageOptions` constructor signature includes a `dockerfile` parameter, this field is not included in the `PackageOptions` namedtuple definition (line 42 of option.py), so the value is lost immediately after being passed.
+
+The `write_dockerfile` function attempts to check for a custom dockerfile using `hasattr(package, 'dockerfile')`, but since the attribute was never stored, this check always fails and the default Dockerfile is always generated.
 </Warning>
 
-### Example 4: Development vs Production
+Source reference: option.py:42-47, containerize.py:33-36
 
-Use build arguments for environment-specific builds:
+## Workarounds
 
-```dockerfile
-FROM python:3.11-slim
+If you need features beyond the auto-generated Dockerfile, consider these alternatives:
 
-WORKDIR /app
+### Option 1: Pre-build Your Image
 
-# Build argument for environment
-ARG ENVIRONMENT=production
+Build your Docker image separately, then reference it directly:
 
-COPY requirements.txt .
+```bash
+# Build with your custom Dockerfile
+docker build -t myusername/my-app:latest -f Dockerfile.custom .
 
-# Install production or dev dependencies
-RUN if [ "$ENVIRONMENT" = "development" ]; then \
-        pip install --no-cache-dir -r requirements.txt && \
-        pip install --no-cache-dir pytest black flake8; \
-    else \
-        pip install --no-cache-dir -r requirements.txt; \
-    fi
+# Push to registry
+docker push myusername/my-app:latest
 
-COPY . .
-
-# Different entrypoints based on environment
-CMD if [ "$ENVIRONMENT" = "development" ]; then \
-        python -m flask run --host=0.0.0.0 --debug; \
-    else \
-        gunicorn -w 4 -b 0.0.0.0:8000 app:app; \
-    fi
+# Run without Buildr's build step
+docker run -p 8080:8080 myusername/my-app:latest
 ```
+
+### Option 2: Modify Generated Dockerfile
+
+You could manually edit the generated `Dockerfile` after Buildr creates it, but this is not recommended as it will be overwritten on the next run.
+
+### Option 3: Fork and Modify Buildr
+
+To properly support custom Dockerfiles, you would need to:
+
+1. Add `dockerfile` to the PackageOptions namedtuple fields
+2. Modify `write_dockerfile` to properly handle the custom dockerfile path
+3. Test the changes
+
+Example fix needed in `option.py`:
 
 ```python
-import os
-from metaparticle_pkg import Containerize
+# Current (broken)
+class PackageOptions(namedtuple('Package', 'repository name builder publish verbose quiet py_version')):
+    def __new__(cls, repository, name, builder='docker', publish=False, verbose=True, quiet=False, py_version=3, dockerfile=None):
+        # dockerfile parameter is accepted but not stored!
+        return super(PackageOptions, cls).__new__(cls, repository, name, builder, publish, verbose, quiet, py_version)
 
-env = os.getenv('ENVIRONMENT', 'production')
-
-@Containerize(
-    package={
-        'repository': 'myusername',
-        'name': f'my-app-{env}',
-        'dockerfile': './Dockerfile'
-    },
-    runtime={'ports': [8000 if env == 'production' else 5000]}
-)
-def main():
-    # Your application
-    pass
+# Fixed version (not in current source)
+class PackageOptions(namedtuple('Package', 'repository name builder publish verbose quiet py_version dockerfile')):
+    def __new__(cls, repository, name=None, builder='docker', publish=False, verbose=True, quiet=False, py_version=3, dockerfile=None):
+        return super(PackageOptions, cls).__new__(cls, repository, name, builder, publish, verbose, quiet, py_version, dockerfile)
 ```
 
-<Tip>
-You cannot pass build args directly through Buildr. Instead, modify your Dockerfile to use environment variables or create separate Dockerfiles for different environments.
-</Tip>
+## Optimizing the Auto-Generated Dockerfile
 
-### Example 5: Non-Python Base Images
+While you can't replace the Dockerfile, you can optimize your project structure to work better with the auto-generated one:
 
-Use any base image, not just Python:
+### Use requirements.txt Efficiently
 
-```dockerfile
-# Use a Node.js base for a hybrid app
-FROM node:18-slim
-
-WORKDIR /app
-
-# Install Python
-RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Node dependencies
-COPY package.json package-lock.json ./
-RUN npm ci --production
-
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
-
-# Copy application
-COPY . .
-
-CMD ["python3", "app.py"]
-```
-
-```python
-@Containerize(
-    package={
-        'repository': 'myusername',
-        'name': 'hybrid-app',
-        'dockerfile': './Dockerfile'
-    }
-)
-def main():
-    # Python app that uses Node.js tooling
-    pass
-```
-
-## Dockerfile Location and Build Context
-
-### Build Context
-
-Buildr builds from the current directory (`.`) by default:
-
-```python
-# Directory structure:
-# .
-# ├── app.py
-# ├── requirements.txt
-# ├── Dockerfile
-# └── modules/
-#     └── helper.py
-```
-
-All files in the current directory are available to `COPY` in your Dockerfile.
-
-Source reference: builder/docker_builder.py:13-21
-
-### Relative Paths
-
-The `dockerfile` parameter can be a relative or absolute path:
-
-<Tabs>
-  <Tab title="Same directory">
-    ```python
-    @Containerize(
-        package={
-            'repository': 'myusername',
-            'dockerfile': './Dockerfile'
-        }
-    )
-    def main():
-        pass
-    ```
-  </Tab>
-  
-  <Tab title="Subdirectory">
-    ```python
-    @Containerize(
-        package={
-            'repository': 'myusername',
-            'dockerfile': './docker/Dockerfile.prod'
-        }
-    )
-    def main():
-        pass
-    ```
-  </Tab>
-  
-  <Tab title="Absolute path">
-    ```python
-    @Containerize(
-        package={
-            'repository': 'myusername',
-            'dockerfile': '/home/user/dockerfiles/Dockerfile'
-        }
-    )
-    def main():
-        pass
-    ```
-  </Tab>
-</Tabs>
-
-### .dockerignore
-
-Create a `.dockerignore` file to exclude files from the build context:
+The auto-generated Dockerfile copies all files first, then installs requirements. To minimize build time:
 
 ```text
-# .dockerignore
+# requirements.txt - pin your versions for reproducible builds
+flask==2.3.2
+requests==2.31.0
+gunicorn==21.2.0
+```
+
+### Use .dockerignore
+
+Create a `.dockerignore` file to exclude unnecessary files from the build context:
+
+```text
 __pycache__
 *.pyc
 *.pyo
@@ -366,273 +154,121 @@ tests/
 .pytest_cache/
 .coverage
 *.log
+node_modules/
 ```
 
 This reduces build context size and speeds up builds.
 
-## Requirements.txt
+### Choose the Right Python Version
 
-Even with custom Dockerfiles, ensure `requirements.txt` exists:
-
-```text
-# requirements.txt
-flask==2.3.0
-requests==2.31.0
-gunicorn==21.2.0
-psycopg2-binary==2.9.9
-```
-
-Your custom Dockerfile should install these dependencies:
-
-```dockerfile
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-```
-
-<Warning>
-The auto-generated Dockerfile expects `requirements.txt` at the root. Custom Dockerfiles can reference it from any location.
-</Warning>
-
-## Debugging Custom Dockerfiles
-
-If your build fails, enable verbose output:
-
-```python
-@Containerize(
-    package={
-        'repository': 'myusername',
-        'dockerfile': './Dockerfile',
-        'verbose': True  # Show detailed build output
-    }
-)
-def main():
-    pass
-```
-
-This displays all Docker build steps and helps identify issues.
-
-Source reference: builder/docker_builder.py:34-58
-
-### Common Build Errors
-
-<AccordionGroup>
-  <Accordion title="Dockerfile not found">
-    ```
-    Error: Dockerfile not found at path: ./Dockerfile
-    ```
-    
-    **Solution:** Verify the path is correct and the file exists:
-    ```bash
-    ls -la ./Dockerfile
-    ```
-  </Accordion>
-  
-  <Accordion title="COPY failed">
-    ```
-    COPY failed: stat /var/lib/docker/tmp/.../file: no such file or directory
-    ```
-    
-    **Solution:** Ensure files being copied exist in the build context (current directory).
-  </Accordion>
-  
-  <Accordion title="Package not found">
-    ```
-    ERROR: Could not find a version that satisfies the requirement package-name
-    ```
-    
-    **Solution:** Check `requirements.txt` for typos and ensure the package exists on PyPI.
-  </Accordion>
-  
-  <Accordion title="Permission denied">
-    ```
-    Permission denied while trying to connect to Docker daemon socket
-    ```
-    
-    **Solution:** Ensure Docker daemon is running and your user has permissions:
-    ```bash
-    sudo usermod -aG docker $USER
-    # Log out and back in
-    ```
-  </Accordion>
-</AccordionGroup>
-
-## Best Practices
-
-<Steps>
-  <Step title="Use specific base image tags">
-    Avoid `latest` tags for reproducible builds:
-    
-    ```dockerfile
-    # Good
-    FROM python:3.11.5-slim
-    
-    # Avoid
-    FROM python:latest
-    ```
-  </Step>
-  
-  <Step title="Minimize layers">
-    Combine RUN commands to reduce image size:
-    
-    ```dockerfile
-    # Good
-    RUN apt-get update && apt-get install -y \
-        pkg1 pkg2 pkg3 \
-        && rm -rf /var/lib/apt/lists/*
-    
-    # Avoid
-    RUN apt-get update
-    RUN apt-get install -y pkg1
-    RUN apt-get install -y pkg2
-    ```
-  </Step>
-  
-  <Step title="Use .dockerignore">
-    Exclude unnecessary files from the build context to speed up builds.
-  </Step>
-  
-  <Step title="Run as non-root">
-    Create and use a non-root user for security:
-    
-    ```dockerfile
-    RUN useradd -m -u 1000 appuser
-    USER appuser
-    ```
-  </Step>
-  
-  <Step title="Optimize layer caching">
-    Copy dependencies before application code:
-    
-    ```dockerfile
-    COPY requirements.txt .
-    RUN pip install -r requirements.txt
-    COPY . .
-    ```
-  </Step>
-</Steps>
-
-## Complete Example: Production-Ready Dockerfile
-
-Here's a comprehensive custom Dockerfile with all best practices:
-
-```dockerfile
-# Multi-stage build for optimized image size
-FROM python:3.11.5-slim as builder
-
-WORKDIR /app
-
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    python3-dev \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies with caching
-COPY requirements.txt .
-RUN pip install --user --no-cache-dir --no-warn-script-location \
-    -r requirements.txt
-
-# Runtime stage
-FROM python:3.11.5-slim
-
-WORKDIR /app
-
-# Install runtime dependencies only
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy installed packages from builder
-COPY --from=builder /root/.local /root/.local
-
-# Create non-root user
-RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app
-
-# Copy application code
-COPY --chown=appuser:appuser . .
-
-# Set PATH to include user-installed packages
-ENV PATH=/root/.local/bin:$PATH
-
-# Switch to non-root user
-USER appuser
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-# Run application
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8000", "app:app"]
-```
+Configure `py_version` based on your needs:
 
 ```python
 from metaparticle_pkg import Containerize
 
 @Containerize(
     package={
-        'repository': 'mycompany',
-        'name': 'production-app',
-        'dockerfile': './Dockerfile',
-        'publish': True,
-        'verbose': False  # Clean output in CI/CD
-    },
-    runtime={
-        'executor': 'metaparticle',
-        'replicas': 5,
-        'ports': [8000],
-        'public': True
+        'repository': 'myusername',
+        'name': 'my-app',
+        'py_version': 3  # Uses python:3-alpine base image
     }
 )
 def main():
-    # Your production application
-    from app import app
-    app.run()
+    print("Running on Python 3.x Alpine")
 
 if __name__ == '__main__':
     main()
 ```
 
-## When to Use Custom Dockerfiles
+<Info>
+Alpine-based images are smaller but may have compatibility issues with some Python packages that require compilation. If you encounter issues, you may need to pre-build with a custom Dockerfile outside of Buildr.
+</Info>
 
-Use custom Dockerfiles when you need:
+## When Buildr's Auto-Generation Works Well
 
-<CardGroup cols={2}>
-  <Card title="System packages" icon="box">
-    Install OS-level dependencies like databases, compilers, or tools
-  </Card>
-  
-  <Card title="Multi-stage builds" icon="layer-group">
-    Optimize image size by separating build and runtime stages
-  </Card>
-  
-  <Card title="Security hardening" icon="shield">
-    Run as non-root user, minimize attack surface
-  </Card>
-  
-  <Card title="Build optimization" icon="rocket">
-    Maximize layer caching for faster rebuilds
-  </Card>
-  
-  <Card title="Complex dependencies" icon="puzzle-piece">
-    Handle C extensions, compiled code, or native libraries
-  </Card>
-  
-  <Card title="Custom base images" icon="cubes">
-    Use company-specific or non-Python base images
-  </Card>
-</CardGroup>
+Buildr's auto-generated Dockerfiles are suitable for:
+
+- Simple Python applications with pure-Python dependencies
+- Microservices without system-level dependencies
+- Quick prototyping and development
+- Applications that work well on Alpine Linux
+- Projects with straightforward requirements.txt dependencies
+
+## When You Need More
+
+If your application needs any of these, you'll need to build images outside of Buildr:
+
+- System packages (postgresql-client, build tools, etc.)
+- Multi-stage builds for optimization
+- Non-Python base images
+- Custom build arguments
+- Compiled extensions with specific build requirements
+- Security hardening (non-root users, minimal base images)
+- Complex layer caching strategies
+
+## Example: Working Within Limitations
+
+Here's a complete example that maximizes what Buildr can do:
+
+```python
+from metaparticle_pkg import Containerize
+
+@Containerize(
+    package={
+        'repository': 'docker.io/myusername',
+        'name': 'simple-api',
+        'py_version': 3,
+        'publish': True,
+        'verbose': True  # See build output
+    },
+    runtime={
+        'executor': 'docker',
+        'ports': [8080]
+    }
+)
+def main():
+    from flask import Flask, jsonify
+    
+    app = Flask(__name__)
+    
+    @app.route('/health')
+    def health():
+        return jsonify({'status': 'healthy'})
+    
+    @app.route('/')
+    def hello():
+        return jsonify({'message': 'Hello from Buildr!'})
+    
+    app.run(host='0.0.0.0', port=8080)
+
+if __name__ == '__main__':
+    main()
+```
+
+requirements.txt:
+```text
+flask==2.3.2
+```
+
+.dockerignore:
+```text
+__pycache__
+*.pyc
+.git
+.vscode
+tests/
+```
+
+This setup works well within Buildr's constraints and is suitable for simple containerized applications.
 
 ## Next Steps
 
 <CardGroup cols={2}>
   <Card title="Basic Usage" icon="play" href="/guides/basic-usage">
-    Review the fundamentals of the @Containerize decorator
+    Learn the fundamentals of the @Containerize decorator
   </Card>
   
-  <Card title="Kubernetes Deployment" icon="cloud" href="/guides/kubernetes-deployment">
-    Deploy your custom containers to Kubernetes
+  <Card title="Advanced Configuration" icon="sliders" href="/guides/advanced-configuration">
+    Explore PackageOptions and RuntimeOptions
   </Card>
 </CardGroup>

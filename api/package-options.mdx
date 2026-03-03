@@ -17,8 +17,7 @@ PackageOptions(
     publish=False,
     verbose=True,
     quiet=False,
-    py_version=3,
-    dockerfile=None
+    py_version=3
 )
 ```
 
@@ -66,18 +65,16 @@ PackageOptions(
   **Example**: `3` (for Python 3.x Alpine base image)
 </ParamField>
 
-<ParamField path="dockerfile" type="str" default="None">
-  Path to a custom Dockerfile. If provided, this file will be used instead of generating a default Dockerfile.
-  
-  **Example**: `'./Dockerfile.custom'`, `'/path/to/Dockerfile'`
-</ParamField>
+<Warning>
+**Note on custom Dockerfiles**: The `PackageOptions` namedtuple does not include a `dockerfile` field. The auto-generated Dockerfile cannot currently be overridden via this parameter. Buildr will always generate a default Dockerfile. See the [Custom Dockerfiles guide](/guides/custom-dockerfiles) for workarounds.
+</Warning>
 
 ## Usage
 
 ### Basic Configuration
 
 ```python
-from buildr_pkg.containerize import Containerize
+from metaparticle_pkg.containerize import Containerize
 
 @Containerize(
     package={
