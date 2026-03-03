@@ -1,80 +1,182 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Build and run your first containerized Python application with Buildr in minutes
 ---
 
-## Get started in three steps
+This guide will walk you through creating and running your first containerized application using Buildr.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+Before you begin, ensure you have:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+- Python 3.6 or higher installed
+- Docker installed and running
+- pip package manager
+
+## Create your first containerized app
+
+<Steps>
+  <Step title="Install Buildr">
+    Install the metaparticle_pkg library using pip:
+
+    ```bash
+    pip install metaparticle_pkg
+    ```
+
+    <Note>
+      Buildr is distributed as `metaparticle_pkg` on PyPI. The package includes Docker SDK for Python as a dependency.
+    </Note>
+  </Step>
+
+  <Step title="Create your application">
+    Create a new file called `hello.py` with the following code:
+
+    ```python
+    from metaparticle_pkg import Containerize
+    import time
+
+    @Containerize(
+        package={'name': 'hello-app', 'repository': 'myrepo'}
+    )
+    def main():
+        print('Hello from Buildr!')
+        
+        for i in range(10):
+            print(f'Running for {i} seconds...')
+            time.sleep(1)
+
+    if __name__ == '__main__':
+        main()
+    ```
+
+    The `@Containerize` decorator tells Buildr to:
+    - Build a container image named `myrepo/hello-app:latest`
+    - Run the application inside that container
+  </Step>
+
+  <Step title="Run your application">
+    Execute your application:
+
+    ```bash
+    python hello.py
+    ```
+
+    You'll see Buildr:
+    1. Generate a Dockerfile
+    2. Build the container image
+    3. Run your application inside the container
+    4. Stream the logs to your terminal
+  </Step>
+
+  <Step title="Verify the container">
+    In another terminal, check that your container is running:
+
+    ```bash
+    docker ps
+    ```
+
+    You should see a container named `hello-app` in the list.
+  </Step>
+</Steps>
+
+## Add runtime configuration
+
+Let's create a web server with port configuration:
+
+<CodeGroup>
+```python hello-web.py
+from metaparticle_pkg import Containerize
+from six.moves import SimpleHTTPServer, socketserver
+import socket
+
+@Containerize(
+    package={'name': 'hello-web', 'repository': 'myrepo'},
+    runtime={'ports': [8080]}
+)
+def main():
+    class Handler(SimpleHTTPServer.SimpleHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-type", "text/plain")
+            self.end_headers()
+            message = f"Hello from {socket.gethostname()}!\n"
+            self.wfile.write(message.encode('UTF-8'))
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    httpd = socketserver.TCPServer(("", 8080), Handler)
+    print("Server running on port 8080")
+    httpd.serve_forever()
 
-### Step 2: Deploy your changes
+if __name__ == '__main__':
+    main()
+```
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+```txt requirements.txt
+six==1.10.0
+metaparticle_pkg==0.4.1
+```
+</CodeGroup>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+The `runtime` parameter configures:
+- **ports**: Which ports to expose from the container
+- **executor**: Which runtime to use (docker or metaparticle)
+- **replicas**: Number of container instances to run
+- **public**: Whether to expose the service publicly
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+## Publish to a registry
 
-### Step 3: Go live
+To publish your container image to Docker Hub or another registry:
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+```python
+from metaparticle_pkg import Containerize
+
+@Containerize(
+    package={
+        'name': 'hello-app',
+        'repository': 'docker.io/yourusername',
+        'publish': True  # Enable publishing
+    }
+)
+def main():
+    print('Hello from Buildr!')
+
+if __name__ == '__main__':
+    main()
+```
+
+<Warning>
+  Make sure you're logged in to your container registry before setting `publish: True`:
+  
+  ```bash
+  docker login
+  ```
+</Warning>
+
+## Configuration options
+
+The `@Containerize` decorator accepts two main parameters:
+
+### Package options
+
+- **repository** (required): Container registry repository
+- **name**: Container name (defaults to current directory name)
+- **builder**: Build system to use (default: 'docker')
+- **publish**: Whether to push to registry (default: False)
+- **verbose**: Enable verbose logging (default: True)
+- **quiet**: Suppress output (default: False)
+- **py_version**: Python version for base image (default: 3)
+
+### Runtime options
+
+- **executor**: Execution environment - 'docker' or 'metaparticle' (default: 'docker')
+- **replicas**: Number of container instances (default: 0)
+- **ports**: List of ports to expose (default: [])
+- **public**: Make service publicly accessible (default: False)
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
+Now that you've created your first containerized application, you can:
 
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+- Explore advanced configuration options
+- Learn how to deploy with multiple replicas
+- Understand how Buildr generates Dockerfiles
+- Deploy to Kubernetes using the metaparticle executor

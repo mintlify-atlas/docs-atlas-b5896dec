@@ -1,0 +1,155 @@
+---
+title: "PackageOptions"
+description: "Configuration options for building and packaging containers"
+---
+
+## Overview
+
+The `PackageOptions` class defines configuration for how your application is built and packaged into a container image.
+
+## Constructor
+
+```python
+PackageOptions(
+    repository,
+    name=None,
+    builder='docker',
+    publish=False,
+    verbose=True,
+    quiet=False,
+    py_version=3,
+    dockerfile=None
+)
+```
+
+## Parameters
+
+<ParamField path="repository" type="str" required>
+  The container registry repository where the image will be stored.
+  
+  **Example**: `'myusername'`, `'gcr.io/myproject'`
+</ParamField>
+
+<ParamField path="name" type="str" default="current directory name">
+  The name of the container image. If not provided, defaults to the basename of the current working directory.
+  
+  **Example**: `'myapp'`, `'web-service'`
+</ParamField>
+
+<ParamField path="builder" type="str" default="'docker'">
+  The builder to use for creating the container image.
+  
+  **Options**: `'docker'`
+</ParamField>
+
+<ParamField path="publish" type="bool" default="False">
+  Whether to push the built image to the container registry.
+  
+  Set to `True` to automatically publish after building.
+</ParamField>
+
+<ParamField path="verbose" type="bool" default="True">
+  Enable verbose output during the build process.
+  
+  Set to `False` to reduce output verbosity.
+</ParamField>
+
+<ParamField path="quiet" type="bool" default="False">
+  Suppress output during the build process.
+  
+  Set to `True` for minimal output.
+</ParamField>
+
+<ParamField path="py_version" type="int" default="3">
+  The Python version to use in the generated Dockerfile.
+  
+  **Example**: `3` (for Python 3.x Alpine base image)
+</ParamField>
+
+<ParamField path="dockerfile" type="str" default="None">
+  Path to a custom Dockerfile. If provided, this file will be used instead of generating a default Dockerfile.
+  
+  **Example**: `'./Dockerfile.custom'`, `'/path/to/Dockerfile'`
+</ParamField>
+
+## Usage
+
+### Basic Configuration
+
+```python
+from buildr_pkg.containerize import Containerize
+
+@Containerize(
+    package={
+        'repository': 'myrepo'
+    }
+)
+def main():
+    pass
+```
+
+### Full Configuration
+
+```python
+@Containerize(
+    package={
+        'repository': 'myrepo',
+        'name': 'myapp',
+        'builder': 'docker',
+        'publish': True,
+        'verbose': True,
+        'quiet': False,
+        'py_version': 3
+    }
+)
+def main():
+    pass
+```
+
+### With Custom Dockerfile
+
+```python
+@Containerize(
+    package={
+        'repository': 'gcr.io/myproject',
+        'name': 'production-app',
+        'dockerfile': './Dockerfile.prod',
+        'publish': True
+    }
+)
+def main():
+    pass
+```
+
+## Default Dockerfile
+
+When no custom Dockerfile is provided, Buildr generates a default Dockerfile:
+
+```dockerfile
+FROM python:{py_version}-alpine
+
+COPY ./ /app/
+RUN pip install --no-cache -r /app/requirements.txt
+
+CMD python /app/{exec_file}
+```
+
+## Required vs Optional
+
+**Required Parameters**:
+- `repository` - Must be provided
+
+**Optional Parameters**:
+- All other parameters have sensible defaults
+
+## Image Naming
+
+The final image name is constructed as:
+
+```
+{repository}/{name}:latest
+```
+
+**Examples**:
+- `repository='myrepo'`, `name='myapp'` → `myrepo/myapp:latest`
+- `repository='gcr.io/project'`, `name='service'` → `gcr.io/project/service:latest`

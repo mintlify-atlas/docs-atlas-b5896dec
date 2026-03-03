@@ -1,0 +1,466 @@
+---
+title: Advanced Configuration
+description: Master advanced Buildr features including replicas, sharding, job specifications, and custom runtime options
+---
+
+Buildr provides advanced configuration options for complex deployment scenarios including scaling, sharding, and batch job execution.
+
+## PackageOptions Reference
+
+The `PackageOptions` class (defined in option.py:42) controls how your container image is built and published.
+
+### Full Configuration
+
+```python
+from metaparticle_pkg import Containerize
+
+@Containerize(
+    package={
+        'repository': 'myusername',      # Required: Docker registry repository
+        'name': 'my-app',                 # Optional: Container name
+        'builder': 'docker',              # Optional: Builder type (default: 'docker')
+        'publish': True,                  # Optional: Push to registry (default: False)
+        'verbose': True,                  # Optional: Verbose build logs (default: True)
+        'quiet': False,                   # Optional: Suppress output (default: False)
+        'py_version': 3                   # Optional: Python base image version (default: 3)
+    }
+)
+def main():
+    print("Hello from advanced configuration!")
+```
+
+### Python Version Selection
+
+The `py_version` parameter determines the base image used in auto-generated Dockerfiles:
+
+<Tabs>
+  <Tab title="Python 3 (default)">
+    ```python
+    @Containerize(
+        package={
+            'repository': 'myusername',
+            'py_version': 3
+        }
+    )
+    def main():
+        pass
+    
+    # Uses: FROM python:3-alpine
+    ```
+  </Tab>
+  
+  <Tab title="Python 3.9">
+    ```python
+    @Containerize(
+        package={
+            'repository': 'myusername',
+            'py_version': 3.9
+        }
+    )
+    def main():
+        pass
+    
+    # Uses: FROM python:3.9-alpine
+    ```
+  </Tab>
+  
+  <Tab title="Python 3.11">
+    ```python
+    @Containerize(
+        package={
+            'repository': 'myusername',
+            'py_version': 3.11
+        }
+    )
+    def main():
+        pass
+    
+    # Uses: FROM python:3.11-alpine
+    ```
+  </Tab>
+</Tabs>
+
+Source reference: containerize.py:39-45
+
+### Publishing Images
+
+When `publish` is set to `True`, Buildr pushes your image to the registry after building:
+
+```python
+@Containerize(
+    package={
+        'repository': 'myusername',
+        'name': 'production-app',
+        'publish': True  # Will push to myusername/production-app:latest
+    }
+)
+def main():
+    pass
+```
+
+<Warning>
+Ensure you're authenticated with your Docker registry before enabling `publish`:
+
+```bash
+docker login
+# or for private registries:
+docker login registry.example.com
+```
+</Warning>
+
+The publish operation uses `docker_client.push()` with streaming output. Source reference: builder/docker_builder.py:26-32
+
+## RuntimeOptions Reference
+
+The `RuntimeOptions` class (defined in option.py:21) controls container execution behavior.
+
+### Available Executors
+
+Buildr supports two execution backends:
+
+<Tabs>
+  <Tab title="Docker (default)">
+    Runs containers locally using the Docker API:
+    
+    ```python
+    @Containerize(
+        package={'repository': 'myusername'},
+        runtime={'executor': 'docker'}
+    )
+    def main():
+        pass
+    ```
+    
+    Features:
+    - Local Docker daemon execution
+    - Port mapping to host
+    - Automatic log streaming
+    - Container lifecycle management
+    
+    Implementation: runner/docker_runner.py
+  </Tab>
+  
+  <Tab title="Metaparticle">
+    Deploys to Kubernetes using the Metaparticle compiler:
+    
+    ```python
+    @Containerize(
+        package={'repository': 'myusername'},
+        runtime={'executor': 'metaparticle'}
+    )
+    def main():
+        pass
+    ```
+    
+    Features:
+    - Kubernetes deployment
+    - Service and job specifications
+    - Sharding and replication
+    - Public service exposure
+    
+    Implementation: runner/metaparticle.py
+  </Tab>
+</Tabs>
+
+Executor selection: runner/__init__.py:5-11
+
+### Scaling with Replicas
+
+Run multiple instances of your container with the `replicas` option:
+
+```python
+@Containerize(
+    package={'repository': 'myusername'},
+    runtime={
+        'executor': 'metaparticle',
+        'replicas': 3,
+        'ports': [8080],
+        'public': True
+    }
+)
+def main():
+    from flask import Flask
+    app = Flask(__name__)
+    
+    @app.route('/')
+    def hello():
+        import socket
+        return f"Hello from {socket.gethostname()}!"
+    
+    app.run(host='0.0.0.0', port=8080)
+```
+
+This creates a Kubernetes service with 3 replicas. Source reference: runner/metaparticle.py:28-43
+
+<Tip>
+Replicas only work with the `metaparticle` executor. The `docker` executor ignores this setting.
+</Tip>
+
+## Sharding Configuration
+
+Sharding distributes work across multiple containers based on pattern matching.
+
+### ShardSpec Options
+
+The `ShardSpec` class (defined in option.py:28) provides:
+
+- `shards`: Number of shard instances (default: 0)
+- `shardExpression`: Regex pattern for shard assignment (default: `'.*'`)
+
+```python
+from metaparticle_pkg import Containerize
+
+@Containerize(
+    package={'repository': 'myusername'},
+    runtime={
+        'executor': 'metaparticle',
+        'shardSpec': {
+            'shards': 4,
+            'shardExpression': r'user-(\d+)'
+        },
+        'ports': [8080]
+    }
+)
+def main():
+    # Each shard processes a subset of users
+    # Shard assignment based on regex capture groups
+    process_users()
+```
+
+Sharding is implemented in the Metaparticle spec generation. Source reference: runner/metaparticle.py:28-43
+
+### Practical Sharding Example
+
+```python
+import os
+from metaparticle_pkg import Containerize
+
+@Containerize(
+    package={'repository': 'myusername'},
+    runtime={
+        'executor': 'metaparticle',
+        'shardSpec': {
+            'shards': 3,
+            'shardExpression': r'.*'
+        }
+    }
+)
+def main():
+    shard_id = os.getenv('METAPARTICLE_SHARD_ID', '0')
+    total_shards = os.getenv('METAPARTICLE_SHARD_COUNT', '1')
+    
+    print(f"Processing shard {shard_id} of {total_shards}")
+    
+    # Divide work based on shard_id
+    process_data_shard(int(shard_id), int(total_shards))
+
+def process_data_shard(shard_id, total_shards):
+    # Only process items where hash(item) % total_shards == shard_id
+    pass
+```
+
+## Job Specifications
+
+For batch processing and finite workloads, use `JobSpec`:
+
+### JobSpec Options
+
+The `JobSpec` class (defined in option.py:35) requires:
+
+- `iterations`: Number of job instances to run (required)
+
+```python
+from metaparticle_pkg import Containerize
+
+@Containerize(
+    package={'repository': 'myusername'},
+    runtime={
+        'executor': 'metaparticle',
+        'jobSpec': {
+            'iterations': 10  # Run 10 parallel jobs
+        }
+    }
+)
+def main():
+    # Process a batch job
+    import random
+    job_id = random.randint(1000, 9999)
+    print(f"Processing job {job_id}")
+    
+    # Your batch processing logic
+    process_batch_task()
+```
+
+<Warning>
+`JobSpec` is mutually exclusive with service specifications. You cannot combine `jobSpec` with `replicas` or `shardSpec`.
+</Warning>
+
+Jobs are created as Kubernetes Job resources. Source reference: runner/metaparticle.py:45-54
+
+### Batch Processing Example
+
+```python
+import os
+from metaparticle_pkg import Containerize
+
+@Containerize(
+    package={'repository': 'myusername'},
+    runtime={
+        'executor': 'metaparticle',
+        'jobSpec': {'iterations': 5}
+    }
+)
+def main():
+    # Each iteration processes different data
+    job_index = os.getenv('JOB_COMPLETION_INDEX', '0')
+    
+    # Process data for this iteration
+    data_files = list_data_files()
+    my_file = data_files[int(job_index)]
+    
+    process_file(my_file)
+    print(f"Job {job_index} completed")
+```
+
+## Port Configuration
+
+Configure network ports for web applications and services:
+
+### Docker Executor Ports
+
+```python
+@Containerize(
+    package={'repository': 'myusername'},
+    runtime={
+        'executor': 'docker',
+        'ports': [8080, 8443]  # Map 8080:8080 and 8443:8443
+    }
+)
+def main():
+    # Start services on specified ports
+    pass
+```
+
+Ports are bound to the same port on the host. Source reference: runner/docker_runner.py:16-26
+
+### Metaparticle Executor Ports
+
+```python
+@Containerize(
+    package={'repository': 'myusername'},
+    runtime={
+        'executor': 'metaparticle',
+        'ports': [8080],
+        'public': True  # Expose via LoadBalancer
+    }
+)
+def main():
+    # Service accessible externally
+    pass
+```
+
+Ports are converted to Kubernetes port specifications with TCP protocol. Source reference: runner/metaparticle.py:13-20
+
+## Verbose and Quiet Modes
+
+Control build output verbosity:
+
+<Tabs>
+  <Tab title="Verbose (default)">
+    ```python
+    @Containerize(
+        package={
+            'repository': 'myusername',
+            'verbose': True  # Show detailed build logs
+        }
+    )
+    def main():
+        pass
+    ```
+    
+    Outputs:
+    - Build step progress
+    - Layer creation
+    - Push status and progress bars
+  </Tab>
+  
+  <Tab title="Quiet mode">
+    ```python
+    @Containerize(
+        package={
+            'repository': 'myusername',
+            'quiet': True  # Suppress most output
+        }
+    )
+    def main():
+        pass
+    ```
+    
+    Suppresses non-critical output for cleaner CI/CD logs.
+  </Tab>
+</Tabs>
+
+## Complete Advanced Example
+
+Here's a production-ready configuration combining multiple features:
+
+```python
+from metaparticle_pkg import Containerize
+import os
+
+@Containerize(
+    package={
+        'repository': 'mycompany',
+        'name': 'data-processor',
+        'builder': 'docker',
+        'publish': os.getenv('CI') == 'true',  # Only publish in CI
+        'verbose': True,
+        'py_version': 3.11
+    },
+    runtime={
+        'executor': 'metaparticle',
+        'replicas': 5,
+        'ports': [8080, 9090],  # App port and metrics port
+        'public': True,
+        'shardSpec': {
+            'shards': 5,
+            'shardExpression': r'customer-(\d+)'
+        }
+    }
+)
+def main():
+    from flask import Flask
+    import prometheus_client
+    
+    app = Flask(__name__)
+    
+    @app.route('/health')
+    def health():
+        return {'status': 'healthy'}
+    
+    @app.route('/process/<customer_id>')
+    def process(customer_id):
+        # Automatic sharding distributes load
+        return process_customer_data(customer_id)
+    
+    # Start metrics server on 9090
+    prometheus_client.start_http_server(9090)
+    
+    # Start app on 8080
+    app.run(host='0.0.0.0', port=8080)
+
+if __name__ == '__main__':
+    main()
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Kubernetes Deployment" icon="cloud" href="/guides/kubernetes-deployment">
+    Deep dive into Metaparticle and Kubernetes deployment
+  </Card>
+  
+  <Card title="Custom Dockerfiles" icon="docker" href="/guides/custom-dockerfiles">
+    Use custom Dockerfiles for complex build requirements
+  </Card>
+</CardGroup>

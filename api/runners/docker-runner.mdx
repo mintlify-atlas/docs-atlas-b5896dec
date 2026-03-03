@@ -1,0 +1,239 @@
+---
+title: 'DockerRunner'
+description: 'Run Buildr applications in Docker containers locally'
+---
+
+## Overview
+
+The `DockerRunner` class provides a simple interface for running containerized applications using Docker. This runner is ideal for local development and testing, allowing you to run your Buildr applications in isolated Docker containers with port mapping and logging capabilities.
+
+## When to Use DockerRunner
+
+Use `DockerRunner` when you:
+- Want to run applications locally on your development machine
+- Need quick iteration and testing without cloud deployment
+- Require direct access to container logs
+- Want to expose container ports to your local machine
+
+## Class Reference
+
+### DockerRunner
+
+Initializes a new Docker runner instance.
+
+```python
+from buildr_pkg.runner import DockerRunner
+
+runner = DockerRunner()
+```
+
+**Attributes:**
+- `docker_client` - Docker API client instance (initialized lazily)
+- `container` - Reference to the running container
+
+## Methods
+
+### run()
+
+Launches a Docker container with the specified image and configuration.
+
+```python
+runner.run(img, name, options)
+```
+
+**Parameters:**
+
+<ParamField path="img" type="string" required>
+  The Docker image to run (e.g., `"myapp:latest"` or `"python:3.9"`)
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Name to assign to the container for identification
+</ParamField>
+
+<ParamField path="options" type="object" required>
+  Configuration object with the following properties:
+  
+  <ParamField path="options.ports" type="list">
+    List of port numbers to expose and map. Ports are automatically bound from container to host with the same port number.
+    
+    Example: `[8080, 3000]` will map container ports 8080 and 3000 to the same ports on the host.
+  </ParamField>
+</ParamField>
+
+**Behavior:**
+- Creates a Docker API client if not already initialized
+- Configures port bindings when ports are specified
+- Creates and starts the container
+- Stores container reference for subsequent operations
+- Logs container creation details
+
+**Example:**
+
+```python
+from buildr_pkg.runner import DockerRunner
+
+class Options:
+    ports = [8080, 5000]
+
+runner = DockerRunner()
+runner.run(
+    img="my-web-app:v1.0",
+    name="my-app-container",
+    options=Options()
+)
+```
+
+### logs()
+
+Streams and displays container logs in real-time.
+
+```python
+runner.logs(*args, **kwargs)
+```
+
+**Parameters:**
+
+Accepts arbitrary arguments (not currently used but available for future extension).
+
+**Behavior:**
+- Creates a Docker API client if not already initialized
+- Streams logs from the container in real-time
+- Follows log output continuously (similar to `docker logs -f`)
+- Logs each line to the application logger
+
+**Example:**
+
+```python
+runner = DockerRunner()
+runner.run(img="myapp:latest", name="myapp", options)
+
+# Stream logs from the container
+runner.logs()
+```
+
+<Note>
+  The `logs()` method will block while streaming logs. It continues following the log output until the container stops or the process is interrupted.
+</Note>
+
+### cancel()
+
+Stops and removes the running container.
+
+```python
+runner.cancel(name)
+```
+
+**Parameters:**
+
+<ParamField path="name" type="string" required>
+  Name of the container to cancel (provided for interface consistency, but the stored container reference is used)
+</ParamField>
+
+**Behavior:**
+- Creates a Docker API client if not already initialized
+- Kills the running container immediately
+- Removes the container and its resources
+- Cleans up the container from the Docker host
+
+**Example:**
+
+```python
+runner = DockerRunner()
+runner.run(img="myapp:latest", name="myapp", options)
+
+# Later, stop and remove the container
+runner.cancel("myapp")
+```
+
+## Configuration Examples
+
+### Basic Container Without Ports
+
+```python
+from buildr_pkg.runner import DockerRunner
+
+class Options:
+    ports = None
+
+runner = DockerRunner()
+runner.run(
+    img="python:3.9",
+    name="python-worker",
+    options=Options()
+)
+```
+
+### Web Application with Multiple Ports
+
+```python
+from buildr_pkg.runner import DockerRunner
+
+class Options:
+    ports = [8080, 8443]  # HTTP and HTTPS
+
+runner = DockerRunner()
+runner.run(
+    img="nginx:latest",
+    name="web-server",
+    options=Options()
+)
+
+print("Web server running at:")
+print("HTTP:  http://localhost:8080")
+print("HTTPS: https://localhost:8443")
+```
+
+### Complete Workflow Example
+
+```python
+from buildr_pkg.runner import DockerRunner
+import logging
+
+# Set up logging to see container output
+logging.basicConfig(level=logging.INFO)
+
+class Options:
+    ports = [3000]
+
+runner = DockerRunner()
+
+try:
+    # Start the container
+    runner.run(
+        img="node:16-alpine",
+        name="node-app",
+        options=Options()
+    )
+    
+    # Stream logs (blocks until interrupted)
+    runner.logs()
+    
+except KeyboardInterrupt:
+    # Clean up on exit
+    runner.cancel("node-app")
+    print("Container stopped and removed")
+```
+
+## Implementation Details
+
+**Docker API Client:**
+- Uses the `docker-py` library (`APIClient`)
+- Automatically detects Docker API version with `version='auto'`
+- Lazily initialized on first method call
+
+**Port Mapping:**
+- Ports are mapped 1:1 from container to host
+- All ports use TCP protocol
+- Port bindings use Docker's default host configuration
+
+**Container Lifecycle:**
+1. Container is created with specified configuration
+2. Container is started immediately after creation
+3. Container reference is stored for log streaming and cancellation
+4. Container is killed and removed on cancellation
+
+## See Also
+
+- [MetaparticleRunner](/api/runners/metaparticle-runner) - For cloud deployments with Kubernetes
+- [RuntimeOptions](/api/runtime-options) - Configure the executor and runtime settings

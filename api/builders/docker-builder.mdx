@@ -1,0 +1,156 @@
+---
+title: 'DockerBuilder'
+description: 'Build and publish Docker container images using the Docker API'
+---
+
+## Overview
+
+The `DockerBuilder` class provides functionality to build Docker images from a Dockerfile and publish them to a container registry. It uses the Docker Engine API client to interact with Docker.
+
+## Constructor
+
+```python
+from buildr_pkg.builder.docker_builder import DockerBuilder
+
+builder = DockerBuilder()
+```
+
+Creates a new `DockerBuilder` instance. The Docker API client is lazily initialized on the first `build()` or `publish()` call.
+
+## Methods
+
+### build()
+
+Builds a Docker image from a Dockerfile in the specified directory.
+
+```python
+builder.build(img, path='.')
+```
+
+<ParamField path="img" type="string" required>
+  The tag to assign to the built image (e.g., `myapp:latest` or `username/myapp:v1.0`)
+</ParamField>
+
+<ParamField path="path" type="string" default=".">
+  The build context path containing the Dockerfile. Defaults to the current directory.
+</ParamField>
+
+#### Behavior
+
+During the build process:
+
+1. Initializes the Docker API client (if not already initialized) with automatic version detection
+2. Calls the Docker API to build the image with UTF-8 encoding
+3. Streams build output in real-time
+4. Processes each line of output from the Docker daemon
+5. Logs build progress at debug level
+6. Raises an exception if the build fails
+
+#### Error Handling
+
+If the Docker daemon returns an error during the build process, the method:
+- Logs the error message at error level
+- Raises an `Exception` with the message: `"Image build failed: <error_message>"`
+
+#### Example
+
+```python
+from buildr_pkg.builder.docker_builder import DockerBuilder
+
+builder = DockerBuilder()
+
+# Build an image from the current directory
+builder.build('myapp:latest')
+
+# Build an image from a specific directory
+builder.build('myapp:v1.0', path='/path/to/app')
+```
+
+### publish()
+
+Pushes a Docker image to a container registry.
+
+```python
+builder.publish(img)
+```
+
+<ParamField path="img" type="string" required>
+  The image tag to push to the registry (e.g., `username/myapp:latest`)
+</ParamField>
+
+#### Behavior
+
+During the publish process:
+
+1. Initializes the Docker API client (if not already initialized) with automatic version detection
+2. Pushes the image to the registry with streaming enabled
+3. Processes the push progress stream in real-time
+4. Logs push status and progress at debug level
+5. Raises an exception if the push fails
+
+#### Error Handling
+
+If the Docker daemon returns an error during the push process, the method:
+- Logs the error message at error level
+- Raises an `Exception` with the message: `"Image build failed: <error_message>"`
+
+Note: Authentication with the registry must be configured separately (e.g., via `docker login` or Docker config).
+
+#### Example
+
+```python
+from buildr_pkg.builder.docker_builder import DockerBuilder
+
+builder = DockerBuilder()
+
+# Build and publish an image
+builder.build('username/myapp:latest')
+builder.publish('username/myapp:latest')
+```
+
+## Complete Usage Example
+
+```python
+from buildr_pkg.builder.docker_builder import DockerBuilder
+
+# Create a builder instance
+builder = DockerBuilder()
+
+# Build a Docker image
+image_tag = 'myregistry.io/myapp:v1.0.0'
+try:
+    builder.build(image_tag, path='./app')
+    print(f"Successfully built {image_tag}")
+except Exception as e:
+    print(f"Build failed: {e}")
+    exit(1)
+
+# Publish the image to the registry
+try:
+    builder.publish(image_tag)
+    print(f"Successfully published {image_tag}")
+except Exception as e:
+    print(f"Publish failed: {e}")
+    exit(1)
+```
+
+## Output Processing
+
+The `DockerBuilder` processes streaming output from the Docker daemon and handles several types of responses:
+
+- **Stream output**: Build logs (e.g., step execution output)
+- **Status updates**: Push progress with percentage completion
+- **Auxiliary data**: Final push completion information
+- **Error messages**: Failures during build or push operations
+
+All output is logged using Python's `logging` module:
+- Normal progress: logged at `DEBUG` level
+- JSON decode errors: logged at `WARNING` level
+- Build/push failures: logged at `ERROR` level and raised as exceptions
+
+## Dependencies
+
+The `DockerBuilder` requires:
+- `docker` package with `APIClient` support
+- Access to Docker daemon (via socket or TCP)
+- Proper permissions to build and push images

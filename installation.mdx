@@ -1,0 +1,282 @@
+---
+title: Installation
+description: Install Buildr and set up your development environment
+---
+
+This guide covers installing Buildr and its dependencies on your system.
+
+## Prerequisites
+
+<Steps>
+  <Step title="Install Python">
+    Buildr requires Python 3.x (tested on 3.6+). Verify your Python installation:
+
+    ```bash
+    python --version
+    ```
+
+    You should see Python 3.6 or higher. If not, download Python from [python.org](https://www.python.org/downloads/).
+  </Step>
+
+  <Step title="Install Docker">
+    Buildr uses Docker to build and run containers. Install Docker for your platform:
+
+    <CardGroup cols={3}>
+      <Card title="macOS" icon="apple">
+        Download [Docker Desktop for Mac](https://docs.docker.com/desktop/install/mac-install/)
+      </Card>
+      <Card title="Windows" icon="windows">
+        Download [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/)
+      </Card>
+      <Card title="Linux" icon="linux">
+        Follow the [Docker Engine installation guide](https://docs.docker.com/engine/install/)
+      </Card>
+    </CardGroup>
+
+    Verify Docker is running:
+
+    ```bash
+    docker --version
+    docker ps
+    ```
+  </Step>
+
+  <Step title="Configure Docker permissions (Linux only)">
+    On Linux, add your user to the docker group to run Docker without sudo:
+
+    ```bash
+    sudo usermod -aG docker $USER
+    newgrp docker
+    ```
+
+    <Note>
+      You may need to log out and back in for group changes to take effect.
+    </Note>
+  </Step>
+</Steps>
+
+## Install Buildr
+
+<Steps>
+  <Step title="Install via pip">
+    Install the metaparticle_pkg package from PyPI:
+
+    ```bash
+    pip install metaparticle_pkg
+    ```
+
+    This installs Buildr and its dependencies, including:
+    - `docker==2.7.0` - Docker SDK for Python
+  </Step>
+
+  <Step title="Verify installation">
+    Verify the installation by importing the package in Python:
+
+    ```bash
+    python -c "from metaparticle_pkg import Containerize; print('Buildr installed successfully!')"
+    ```
+  </Step>
+</Steps>
+
+## Install from source
+
+For development or to use the latest features, you can install Buildr from source:
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/fkjadoon94/buildr.git
+    cd buildr/python
+    ```
+  </Step>
+
+  <Step title="Create a virtual environment">
+    ```bash
+    make venv
+    source venv/bin/activate
+    ```
+
+    Or manually:
+
+    <CodeGroup>
+    ```bash Linux/macOS
+    python -m venv venv
+    source venv/bin/activate
+    ```
+
+    ```bash Windows
+    python -m venv venv
+    venv\Scripts\activate
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Install dependencies">
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+    This installs:
+    - `docker==2.7.0` - Docker SDK
+    - `flake8` - Code linting
+    - `pytest` - Testing framework
+    - `pytest-cov` - Code coverage
+  </Step>
+
+  <Step title="Run the examples">
+    Try running one of the example applications:
+
+    ```bash
+    cd examples/simple
+    python example.py
+    ```
+
+    This will build and run a simple containerized application.
+  </Step>
+</Steps>
+
+## Development setup
+
+If you're contributing to Buildr or developing with the source code:
+
+<Steps>
+  <Step title="Install development dependencies">
+    ```bash
+    pip install -r requirements.txt
+    ```
+  </Step>
+
+  <Step title="Run tests">
+    Execute the test suite:
+
+    ```bash
+    pytest
+    ```
+
+    Or using tox for multi-environment testing:
+
+    ```bash
+    tox
+    ```
+  </Step>
+
+  <Step title="Run linting">
+    Check code quality:
+
+    ```bash
+    flake8 buildr_pkg/
+    ```
+  </Step>
+</Steps>
+
+## Container registry setup
+
+To publish container images, you need access to a container registry:
+
+### Docker Hub
+
+<Steps>
+  <Step title="Create a Docker Hub account">
+    Sign up at [hub.docker.com](https://hub.docker.com/) if you don't have an account.
+  </Step>
+
+  <Step title="Login to Docker Hub">
+    ```bash
+    docker login
+    ```
+
+    Enter your Docker Hub username and password when prompted.
+  </Step>
+
+  <Step title="Use your registry in Buildr">
+    ```python
+    @Containerize(
+        package={
+            'name': 'myapp',
+            'repository': 'docker.io/yourusername',
+            'publish': True
+        }
+    )
+    ```
+  </Step>
+</Steps>
+
+### Other registries
+
+Buildr works with any Docker-compatible registry:
+
+<CodeGroup>
+```python Google Container Registry
+@Containerize(
+    package={
+        'name': 'myapp',
+        'repository': 'gcr.io/project-id',
+        'publish': True
+    }
+)
+```
+
+```python AWS ECR
+@Containerize(
+    package={
+        'name': 'myapp',
+        'repository': 'account-id.dkr.ecr.region.amazonaws.com',
+        'publish': True
+    }
+)
+```
+
+```python Azure Container Registry
+@Containerize(
+    package={
+        'name': 'myapp',
+        'repository': 'myregistry.azurecr.io',
+        'publish': True
+    }
+)
+```
+</CodeGroup>
+
+<Warning>
+  Make sure you're authenticated to your chosen registry before setting `publish: True`.
+</Warning>
+
+## Troubleshooting
+
+### Docker daemon not running
+
+If you see "Cannot connect to the Docker daemon", ensure Docker is running:
+
+```bash
+# Check Docker status
+docker info
+
+# Start Docker Desktop on macOS/Windows
+# or start the Docker daemon on Linux
+sudo systemctl start docker
+```
+
+### Permission denied
+
+On Linux, if you see permission errors:
+
+```bash
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+### Import errors
+
+If imports fail, ensure the package is installed in your active Python environment:
+
+```bash
+pip list | grep metaparticle
+```
+
+## Next steps
+
+With Buildr installed, you're ready to build your first containerized application:
+
+<Card title="Quickstart" icon="rocket" href="/quickstart">
+  Follow the quickstart guide to create your first containerized app
+</Card>

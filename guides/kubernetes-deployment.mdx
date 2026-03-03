@@ -1,0 +1,583 @@
+---
+title: Kubernetes Deployment
+description: Deploy containerized Python applications to Kubernetes using the MetaparticleRunner
+---
+
+Buildr can deploy your Python applications directly to Kubernetes using the `metaparticle` executor. This guide explains how to configure and manage Kubernetes deployments.
+
+## Overview
+
+The MetaparticleRunner (runner/metaparticle.py) generates Kubernetes manifests and deploys them using the `mp-compiler` tool. It supports:
+
+- **Services**: Long-running applications with replicas and load balancing
+- **Jobs**: Batch processing with finite iterations
+- **Sharding**: Distributed workload processing
+- **Port exposure**: Internal and public service access
+
+## Prerequisites
+
+<Steps>
+  <Step title="Install Metaparticle compiler">
+    The `mp-compiler` tool must be available in your PATH:
+    
+    ```bash
+    # Installation instructions vary by platform
+    # Check the Metaparticle documentation for your OS
+    npm install -g @metaparticle/compiler
+    ```
+  </Step>
+  
+  <Step title="Configure kubectl">
+    Ensure kubectl is configured with access to your cluster:
+    
+    ```bash
+    kubectl config current-context
+    kubectl get nodes
+    ```
+  </Step>
+  
+  <Step title="Authenticate to container registry">
+    Push access is required if using `publish: True`:
+    
+    ```bash
+    docker login
+    # Or for private registries
+    docker login registry.example.com
+    ```
+  </Step>
+</Steps>
+
+## Basic Kubernetes Deployment
+
+Switch from local Docker execution to Kubernetes by setting `executor: 'metaparticle'`:
+
+```python
+from metaparticle_pkg import Containerize
+
+@Containerize(
+    package={
+        'repository': 'myusername',
+        'name': 'my-k8s-app'
+    },
+    runtime={
+        'executor': 'metaparticle',
+        'replicas': 3,
+        'ports': [8080],
+        'public': False
+    }
+)
+def main():
+    from flask import Flask
+    app = Flask(__name__)
+    
+    @app.route('/')
+    def hello():
+        return "Hello from Kubernetes!"
+    
+    app.run(host='0.0.0.0', port=8080)
+
+if __name__ == '__main__':
+    main()
+```
+
+<Tip>
+When you run this script, Buildr will:
+1. Build the Docker image
+2. Generate `.metaparticle/spec.json`
+3. Execute `mp-compiler -f .metaparticle/spec.json`
+4. Deploy to your configured Kubernetes cluster
+</Tip>
+
+## Generated Metaparticle Spec
+
+Buildr generates a JSON specification file for Metaparticle. Here's what gets created:
+
+### Service Specification
+
+For deployments with replicas:
+
+```json
+{
+  "name": "my-k8s-app",
+  "guid": 1234567,
+  "services": [
+    {
+      "name": "my-k8s-app",
+      "replicas": 3,
+      "shardSpec": null,
+      "containers": [
+        {"image": "myusername/my-k8s-app:latest"}
+      ],
+      "ports": [
+        {"number": 8080, "protocol": "TCP"}
+      ]
+    }
+  ],
+  "serve": {
+    "name": "my-k8s-app",
+    "public": false
+  }
+}
+```
+
+Source reference: runner/metaparticle.py:22-43
+
+### Job Specification
+
+For batch jobs:
+
+```json
+{
+  "name": "my-k8s-job",
+  "guid": 1234567,
+  "jobs": [
+    {
+      "name": "my-k8s-job",
+      "replicas": 10,
+      "containers": [
+        {"image": "myusername/my-k8s-job:latest"}
+      ]
+    }
+  ]
+}
+```
+
+Source reference: runner/metaparticle.py:45-54
+
+## Deploying Services
+
+Services are long-running applications that handle requests:
+
+### Internal Service
+
+Cluster-internal service (accessible only within Kubernetes):
+
+```python
+@Containerize(
+    package={'repository': 'myusername', 'name': 'api-service'},
+    runtime={
+        'executor': 'metaparticle',
+        'replicas': 5,
+        'ports': [8080],
+        'public': False  # ClusterIP service
+    }
+)
+def main():
+    # Your API service code
+    start_api_server(port=8080)
+```
+
+This creates a Kubernetes Service of type `ClusterIP`, accessible at `api-service.default.svc.cluster.local:8080`.
+
+### Public Service
+
+Expose your service externally with a LoadBalancer:
+
+```python
+@Containerize(
+    package={'repository': 'myusername', 'name': 'web-app'},
+    runtime={
+        'executor': 'metaparticle',
+        'replicas': 3,
+        'ports': [80],
+        'public': True  # LoadBalancer service
+    }
+)
+def main():
+    # Your web application code
+    start_web_server(port=80)
+```
+
+<Warning>
+Setting `public: True` creates a LoadBalancer service, which may incur costs on cloud providers (AWS ELB, GCP Load Balancer, etc.).
+</Warning>
+
+The `public` field is written to the `serve` section of the spec. Source reference: runner/metaparticle.py:40-43
+
+## Deploying Jobs
+
+For finite batch processing tasks, use `jobSpec`:
+
+```python
+from metaparticle_pkg import Containerize
+
+@Containerize(
+    package={'repository': 'myusername', 'name': 'batch-processor'},
+    runtime={
+        'executor': 'metaparticle',
+        'jobSpec': {
+            'iterations': 20  # Run 20 parallel jobs
+        }
+    }
+)
+def main():
+    import os
+    
+    # Get job index from environment
+    job_index = os.getenv('JOB_COMPLETION_INDEX', '0')
+    
+    print(f"Processing batch {job_index}")
+    process_batch(int(job_index))
+    
+    print(f"Batch {job_index} complete")
+
+def process_batch(index):
+    # Your batch processing logic
+    pass
+
+if __name__ == '__main__':
+    main()
+```
+
+This creates a Kubernetes Job with `replicas` set to the `iterations` value. Source reference: runner/metaparticle.py:45-54
+
+### Job vs Service
+
+<Tabs>
+  <Tab title="When to use Jobs">
+    Use `jobSpec` for:
+    
+    - Data processing pipelines
+    - ETL workloads
+    - Report generation
+    - Database migrations
+    - Machine learning training
+    
+    Jobs run to completion and exit.
+  </Tab>
+  
+  <Tab title="When to use Services">
+    Use `replicas` and `ports` for:
+    
+    - Web applications
+    - REST APIs
+    - Microservices
+    - WebSocket servers
+    - Long-running workers
+    
+    Services run indefinitely and restart on failure.
+  </Tab>
+</Tabs>
+
+## Sharding for Distributed Processing
+
+Sharding distributes work across multiple replicas based on pattern matching:
+
+```python
+from metaparticle_pkg import Containerize
+
+@Containerize(
+    package={'repository': 'myusername', 'name': 'sharded-processor'},
+    runtime={
+        'executor': 'metaparticle',
+        'replicas': 4,  # Must specify replicas with sharding
+        'shardSpec': {
+            'shards': 4,
+            'shardExpression': r'user-(\d+)'  # Regex for shard assignment
+        },
+        'ports': [8080]
+    }
+)
+def main():
+    import os
+    from flask import Flask, request
+    
+    app = Flask(__name__)
+    
+    shard_id = os.getenv('METAPARTICLE_SHARD_ID', '0')
+    
+    @app.route('/process/<user_id>')
+    def process_user(user_id):
+        # Requests are automatically routed to the correct shard
+        # based on the shardExpression pattern
+        return f"Processed by shard {shard_id}: {user_id}"
+    
+    app.run(host='0.0.0.0', port=8080)
+
+if __name__ == '__main__':
+    main()
+```
+
+The `shardSpec` is embedded in the service specification. Source reference: runner/metaparticle.py:32
+
+### How Sharding Works
+
+<Steps>
+  <Step title="Regex matching">
+    The `shardExpression` regex captures groups from incoming requests or data identifiers.
+  </Step>
+  
+  <Step title="Hash calculation">
+    Captured groups are hashed to determine which shard handles the request.
+  </Step>
+  
+  <Step title="Routing">
+    Metaparticle routes traffic to the appropriate replica based on the hash.
+  </Step>
+  
+  <Step title="Processing">
+    Each shard processes only its assigned subset of data.
+  </Step>
+</Steps>
+
+## Port Configuration
+
+Ports are converted to Kubernetes port specifications:
+
+```python
+@Containerize(
+    package={'repository': 'myusername'},
+    runtime={
+        'executor': 'metaparticle',
+        'replicas': 2,
+        'ports': [8080, 9090, 9100]  # Multiple ports
+    }
+)
+def main():
+    # Start multiple services:
+    # - Main app on 8080
+    # - Metrics on 9090
+    # - Health checks on 9100
+    pass
+```
+
+Each port in the list becomes:
+
+```json
+{"number": 8080, "protocol": "TCP"}
+```
+
+Source reference: runner/metaparticle.py:13-20
+
+<Tip>
+All ports use TCP protocol. UDP ports are not currently supported.
+</Tip>
+
+## Managing Deployments
+
+### Viewing Logs
+
+After deployment, Buildr attaches to logs automatically:
+
+```python
+@Containerize(
+    package={'repository': 'myusername', 'name': 'my-app'},
+    runtime={'executor': 'metaparticle', 'replicas': 1}
+)
+def main():
+    print("Application started")
+    # Logs appear in your terminal
+```
+
+This executes: `mp-compiler -f .metaparticle/spec.json --deploy=false --attach=true`
+
+Source reference: runner/metaparticle.py:10-11
+
+### Canceling/Deleting Deployments
+
+Press Ctrl+C to trigger cleanup:
+
+```python
+import signal
+import sys
+
+# This is handled automatically by the @Containerize decorator
+# Signal handler calls runner.cancel(name)
+```
+
+The cancel method executes: `mp-compiler -f .metaparticle/spec.json --delete`
+
+Source reference: runner/metaparticle.py:7-8, containerize.py:77-80
+
+### Manual Management
+
+You can also manage deployments with kubectl:
+
+```bash
+# View deployments
+kubectl get deployments
+kubectl get services
+kubectl get jobs
+
+# View pods
+kubectl get pods -l app=my-k8s-app
+
+# Check logs
+kubectl logs -f deployment/my-k8s-app
+
+# Scale manually
+kubectl scale deployment/my-k8s-app --replicas=5
+
+# Delete
+kubectl delete deployment/my-k8s-app
+kubectl delete service/my-k8s-app
+```
+
+## Complete Example: Microservice on Kubernetes
+
+Here's a production-ready microservice deployment:
+
+```python
+from metaparticle_pkg import Containerize
+from flask import Flask, jsonify
+import os
+import logging
+
+app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
+
+@app.route('/health')
+def health():
+    return jsonify({
+        'status': 'healthy',
+        'pod': os.getenv('HOSTNAME', 'unknown')
+    })
+
+@app.route('/api/users/<user_id>')
+def get_user(user_id):
+    # Shard-aware processing
+    shard_id = os.getenv('METAPARTICLE_SHARD_ID', '0')
+    logging.info(f"Shard {shard_id} processing user {user_id}")
+    
+    return jsonify({
+        'user_id': user_id,
+        'processed_by_shard': shard_id
+    })
+
+@Containerize(
+    package={
+        'repository': 'mycompany',
+        'name': 'user-service',
+        'publish': True,  # Push to registry
+        'py_version': 3.11
+    },
+    runtime={
+        'executor': 'metaparticle',
+        'replicas': 5,
+        'shardSpec': {
+            'shards': 5,
+            'shardExpression': r'users/(\d+)'
+        },
+        'ports': [8080],
+        'public': True  # External LoadBalancer
+    }
+)
+def main():
+    logging.info("Starting user service...")
+    app.run(host='0.0.0.0', port=8080)
+
+if __name__ == '__main__':
+    main()
+```
+
+### Deployment Process
+
+<Steps>
+  <Step title="Build">
+    ```bash
+    python user_service.py
+    # Building Docker image...
+    ```
+  </Step>
+  
+  <Step title="Push">
+    ```bash
+    # Pushing to mycompany/user-service:latest...
+    # The push refers to repository [docker.io/mycompany/user-service]
+    ```
+  </Step>
+  
+  <Step title="Generate spec">
+    ```bash
+    # Writing .metaparticle/spec.json
+    ```
+  </Step>
+  
+  <Step title="Deploy">
+    ```bash
+    # Deploying to Kubernetes...
+    # deployment.apps/user-service created
+    # service/user-service created
+    ```
+  </Step>
+  
+  <Step title="Stream logs">
+    ```bash
+    # Attaching to logs...
+    # Starting user service...
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Common Issues
+
+<AccordionGroup>
+  <Accordion title="mp-compiler not found">
+    The Metaparticle compiler is not installed or not in PATH.
+    
+    **Solution:**
+    ```bash
+    npm install -g @metaparticle/compiler
+    # or add to PATH
+    export PATH="$PATH:/path/to/mp-compiler"
+    ```
+  </Accordion>
+  
+  <Accordion title="Image pull errors">
+    Kubernetes cannot pull your Docker image.
+    
+    **Solution:**
+    - Ensure `publish: True` is set
+    - Check image name matches repository
+    - Verify registry authentication:
+      ```bash
+      kubectl create secret docker-registry regcred \
+        --docker-server=https://index.docker.io/v1/ \
+        --docker-username=myusername \
+        --docker-password=mypassword
+      ```
+  </Accordion>
+  
+  <Accordion title="Pods not starting">
+    Check pod status and logs:
+    
+    ```bash
+    kubectl get pods
+    kubectl describe pod <pod-name>
+    kubectl logs <pod-name>
+    ```
+    
+    Common causes:
+    - Port conflicts
+    - Missing dependencies in requirements.txt
+    - Application crashes
+  </Accordion>
+  
+  <Accordion title="Cannot access public service">
+    LoadBalancer not receiving external IP.
+    
+    **Solution:**
+    ```bash
+    # Check service status
+    kubectl get service user-service
+    
+    # Wait for EXTERNAL-IP (may take several minutes)
+    # On minikube/kind, use:
+    kubectl port-forward service/user-service 8080:8080
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Custom Dockerfiles" icon="docker" href="/guides/custom-dockerfiles">
+    Customize the build process with your own Dockerfile
+  </Card>
+  
+  <Card title="Advanced Configuration" icon="sliders" href="/guides/advanced-configuration">
+    Learn about all configuration options
+  </Card>
+</CardGroup>

@@ -1,0 +1,223 @@
+---
+title: "RuntimeOptions"
+description: "Configuration options for container runtime and execution"
+---
+
+## RuntimeOptions
+
+### Overview
+
+The `RuntimeOptions` class defines how your containerized application is executed, including the executor type, scaling, networking, and specialized execution modes.
+
+### Constructor
+
+```python
+RuntimeOptions(
+    executor='docker',
+    replicas=0,
+    ports=[],
+    public=False,
+    shardSpec=None,
+    jobSpec=None
+)
+```
+
+### Parameters
+
+<ParamField path="executor" type="str" default="'docker'">
+  The container executor/orchestrator to use for running the application.
+  
+  **Options**: `'docker'`, `'kubernetes'`
+</ParamField>
+
+<ParamField path="replicas" type="int" default="0">
+  Number of replicas to run. Use for scaling your application across multiple instances.
+  
+  **Example**: `3` (runs 3 instances of the container)
+</ParamField>
+
+<ParamField path="ports" type="list" default="[]">
+  List of ports to expose from the container.
+  
+  **Example**: `[8080]`, `[80, 443]`
+</ParamField>
+
+<ParamField path="public" type="bool" default="False">
+  Whether to expose the service publicly (create a public load balancer).
+  
+  Set to `True` for public access. Primarily used with Kubernetes executor.
+</ParamField>
+
+<ParamField path="shardSpec" type="ShardSpec" default="None">
+  Specification for sharded execution. See [ShardSpec](#shardspec) below.
+</ParamField>
+
+<ParamField path="jobSpec" type="JobSpec" default="None">
+  Specification for job-based execution. See [JobSpec](#jobspec) below.
+</ParamField>
+
+### Usage
+
+#### Basic Runtime
+
+```python
+from buildr_pkg.containerize import Containerize
+
+@Containerize(
+    runtime={
+        'executor': 'docker',
+        'ports': [8080]
+    }
+)
+def main():
+    pass
+```
+
+#### Scaled Deployment
+
+```python
+@Containerize(
+    runtime={
+        'executor': 'kubernetes',
+        'replicas': 3,
+        'ports': [8080],
+        'public': True
+    }
+)
+def serve():
+    pass
+```
+
+#### Sharded Execution
+
+```python
+@Containerize(
+    runtime={
+        'executor': 'kubernetes',
+        'shardSpec': {
+            'shards': 4,
+            'shardExpression': r'^shard-(\d+)$'
+        }
+    }
+)
+def process_sharded_data():
+    pass
+```
+
+#### Job Execution
+
+```python
+@Containerize(
+    runtime={
+        'executor': 'kubernetes',
+        'jobSpec': {
+            'iterations': 10
+        }
+    }
+)
+def batch_job():
+    pass
+```
+
+---
+
+## ShardSpec
+
+### Overview
+
+The `ShardSpec` class configures sharded execution, allowing you to distribute work across multiple container instances with shard-specific data.
+
+### Constructor
+
+```python
+ShardSpec(
+    shards=0,
+    shardExpression='.*'
+)
+```
+
+### Parameters
+
+<ParamField path="shards" type="int" default="0">
+  Number of shards to create. Each shard runs as a separate container instance.
+  
+  **Example**: `4` (creates 4 sharded instances)
+</ParamField>
+
+<ParamField path="shardExpression" type="str" default="'.*'">
+  Regular expression pattern for identifying and extracting shard numbers.
+  
+  **Example**: `r'^shard-(\d+)$'`
+</ParamField>
+
+### Usage
+
+```python
+from buildr_pkg.option import ShardSpec
+
+shard_config = ShardSpec(
+    shards=8,
+    shardExpression=r'data-shard-(\d+)\.txt'
+)
+
+@Containerize(
+    runtime={
+        'executor': 'kubernetes',
+        'shardSpec': shard_config
+    }
+)
+def process_data():
+    # Process shard-specific data
+    pass
+```
+
+---
+
+## JobSpec
+
+### Overview
+
+The `JobSpec` class configures job-based execution for batch processing workloads.
+
+### Constructor
+
+```python
+JobSpec(iterations=0)
+```
+
+### Parameters
+
+<ParamField path="iterations" type="int" required>
+  Number of times to run the job. This parameter is **required** when using JobSpec.
+  
+  **Example**: `10` (runs the job 10 times)
+</ParamField>
+
+### Usage
+
+```python
+from buildr_pkg.option import JobSpec
+
+job_config = JobSpec(iterations=5)
+
+@Containerize(
+    runtime={
+        'executor': 'kubernetes',
+        'jobSpec': job_config
+    }
+)
+def batch_process():
+    # Runs 5 times as separate job executions
+    pass
+```
+
+### Required vs Optional
+
+**RuntimeOptions**:
+- All parameters are optional with sensible defaults
+
+**ShardSpec**:
+- All parameters are optional with defaults
+
+**JobSpec**:
+- `iterations` is **required**

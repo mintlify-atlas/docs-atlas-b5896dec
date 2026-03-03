@@ -1,0 +1,482 @@
+---
+title: 'Machine Learning Workload'
+description: 'Containerize and run machine learning training jobs with GPU support'
+---
+
+## Overview
+
+This example demonstrates how to use Buildr for machine learning workloads. You'll learn how to containerize training scripts, manage dependencies, and configure resource requirements like GPU access.
+
+## Complete Example
+
+Here's a complete ML training pipeline that's automatically containerized:
+
+```python
+import numpy as np
+import tensorflow as tf
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split
+from metaparticle_pkg import Containerize
+import os
+
+# Configuration
+model_name = 'sentiment-classifier'
+repository = 'docker.io/mlteam'
+epochs = 10
+batch_size = 32
+
+
+def create_model(input_dim, num_classes):
+    """Create a simple neural network model"""
+    model = tf.keras.Sequential([
+        tf.keras.layers.Dense(128, activation='relu', input_shape=(input_dim,)),
+        tf.keras.layers.Dropout(0.3),
+        tf.keras.layers.Dense(64, activation='relu'),
+        tf.keras.layers.Dropout(0.3),
+        tf.keras.layers.Dense(num_classes, activation='softmax')
+    ])
+    
+    model.compile(
+        optimizer='adam',
+        loss='sparse_categorical_crossentropy',
+        metrics=['accuracy']
+    )
+    
+    return model
+
+
+def save_model(model, path='./models'):
+    """Save trained model to disk"""
+    os.makedirs(path, exist_ok=True)
+    model_path = os.path.join(path, f'{model_name}.h5')
+    model.save(model_path)
+    print(f"Model saved to {model_path}")
+    return model_path
+
+
+@Containerize(
+    package={
+        'name': model_name,
+        'repository': repository,
+        'publish': True,
+        'dockerfile': 'Dockerfile.ml'  # Use custom Dockerfile with ML dependencies
+    },
+    runtime={
+        'executor': 'docker',
+        'gpu': True,  # Enable GPU support
+        'memory': '4Gi',  # Request 4GB memory
+        'cpu': '2',  # Request 2 CPU cores
+    }
+)
+def train_model():
+    """Main training function"""
+    print("Starting ML training job...")
+    print(f"TensorFlow version: {tf.__version__}")
+    print(f"GPU Available: {tf.config.list_physical_devices('GPU')}")
+    
+    # Generate synthetic dataset
+    print("\nGenerating dataset...")
+    X, y = make_classification(
+        n_samples=10000,
+        n_features=20,
+        n_informative=15,
+        n_redundant=5,
+        n_classes=3,
+        random_state=42
+    )
+    
+    # Split into train and validation sets
+    X_train, X_val, y_train, y_val = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+    
+    print(f"Training samples: {len(X_train)}")
+    print(f"Validation samples: {len(X_val)}")
+    
+    # Create and train model
+    print("\nBuilding model...")
+    model = create_model(input_dim=X_train.shape[1], num_classes=3)
+    model.summary()
+    
+    print("\nTraining model...")
+    history = model.fit(
+        X_train, y_train,
+        validation_data=(X_val, y_val),
+        epochs=epochs,
+        batch_size=batch_size,
+        verbose=1
+    )
+    
+    # Evaluate model
+    print("\nEvaluating model...")
+    val_loss, val_accuracy = model.evaluate(X_val, y_val, verbose=0)
+    print(f"Validation Loss: {val_loss:.4f}")
+    print(f"Validation Accuracy: {val_accuracy:.4f}")
+    
+    # Save model
+    model_path = save_model(model)
+    
+    print("\nTraining completed successfully!")
+    return model, history
+
+
+if __name__ == '__main__':
+    model, history = train_model()
+```
+
+## Step-by-Step Breakdown
+
+<Steps>
+  <Step title="Import ML dependencies">
+    ```python
+    import numpy as np
+    import tensorflow as tf
+    from sklearn.datasets import make_classification
+    from sklearn.model_selection import train_test_split
+    from metaparticle_pkg import Containerize
+    ```
+    
+    Import your ML frameworks and Buildr. The containerized environment will include all these dependencies.
+  </Step>
+
+  <Step title="Define model architecture">
+    ```python
+    def create_model(input_dim, num_classes):
+        model = tf.keras.Sequential([
+            tf.keras.layers.Dense(128, activation='relu', input_shape=(input_dim,)),
+            tf.keras.layers.Dropout(0.3),
+            tf.keras.layers.Dense(64, activation='relu'),
+            tf.keras.layers.Dropout(0.3),
+            tf.keras.layers.Dense(num_classes, activation='softmax')
+        ])
+        
+        model.compile(
+            optimizer='adam',
+            loss='sparse_categorical_crossentropy',
+            metrics=['accuracy']
+        )
+        
+        return model
+    ```
+    
+    Create a simple neural network with dropout for regularization.
+    
+    <Note>
+      This architecture is just an example. Replace it with your actual model (CNN, transformer, etc.).
+    </Note>
+  </Step>
+
+  <Step title="Configure containerization with GPU support">
+    ```python
+    @Containerize(
+        package={
+            'name': model_name,
+            'repository': repository,
+            'publish': True,
+            'dockerfile': 'Dockerfile.ml'
+        },
+        runtime={
+            'executor': 'docker',
+            'gpu': True,
+            'memory': '4Gi',
+            'cpu': '2',
+        }
+    )
+    def train_model():
+        # ... training code
+    ```
+    
+    **Package Configuration:**
+    - **name**: Model/job name for tracking
+    - **repository**: Docker registry for the training image
+    - **publish**: Push image to registry for reuse
+    - **dockerfile**: Custom Dockerfile with ML dependencies (see below)
+    
+    **Runtime Configuration:**
+    - **executor**: `'docker'` for local or `'metaparticle'` for cluster
+    - **gpu**: `True` enables GPU access (requires NVIDIA Docker)
+    - **memory**: `'4Gi'` requests 4GB RAM for training
+    - **cpu**: `'2'` requests 2 CPU cores
+    
+    <Tip>
+      Adjust memory and CPU based on your model size and dataset. Large models may need 8GB+ memory.
+    </Tip>
+  </Step>
+
+  <Step title="Implement training logic">
+    ```python
+    def train_model():
+        print("Starting ML training job...")
+        
+        # Generate or load dataset
+        X, y = make_classification(n_samples=10000, n_features=20, n_classes=3)
+        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2)
+        
+        # Create and train model
+        model = create_model(input_dim=X_train.shape[1], num_classes=3)
+        history = model.fit(
+            X_train, y_train,
+            validation_data=(X_val, y_val),
+            epochs=epochs,
+            batch_size=batch_size
+        )
+        
+        # Evaluate and save
+        val_loss, val_accuracy = model.evaluate(X_val, y_val)
+        save_model(model)
+        
+        return model, history
+    ```
+    
+    Standard ML training workflow that runs inside the container.
+  </Step>
+</Steps>
+
+## Custom Dockerfile for ML
+
+Create a `Dockerfile.ml` with ML-specific dependencies:
+
+```dockerfile
+FROM tensorflow/tensorflow:2.13.0-gpu
+
+# Install additional dependencies
+RUN pip install --no-cache-dir \
+    scikit-learn \
+    pandas \
+    matplotlib \
+    seaborn \
+    jupyter
+
+# Copy application code
+COPY ./ /app/
+WORKDIR /app
+
+# Install project dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Run training script
+CMD ["python", "train.py"]
+```
+
+<Note>
+  Using a pre-built TensorFlow GPU image ensures CUDA and cuDNN are properly configured.
+</Note>
+
+## Configuration Options Explained
+
+### Package Options for ML
+
+| Option | Type | Description | Example |
+|--------|------|-------------|----------|
+| `name` | string | Model/job identifier | `'sentiment-classifier'` |
+| `repository` | string | Docker registry | `'docker.io/mlteam'` |
+| `publish` | boolean | Push image to registry | `True` |
+| `dockerfile` | string | Custom Dockerfile path | `'Dockerfile.ml'` |
+| `py_version` | string | Python version (if using auto-generated Dockerfile) | `'3.9'` |
+
+### Runtime Options for ML
+
+| Option | Type | Description | Example |
+|--------|------|-------------|----------|
+| `executor` | string | Runtime environment | `'docker'`, `'metaparticle'` |
+| `gpu` | boolean | Enable GPU access | `True` |
+| `memory` | string | Memory allocation | `'4Gi'`, `'8Gi'`, `'16Gi'` |
+| `cpu` | string | CPU cores | `'2'`, `'4'`, `'8'` |
+| `env` | dict | Environment variables | `{'CUDA_VISIBLE_DEVICES': '0'}` |
+
+## Running the Example
+
+<Steps>
+  <Step title="Create requirements.txt">
+    ```txt
+    metaparticle-pkg
+    tensorflow>=2.13.0
+    scikit-learn>=1.3.0
+    numpy>=1.24.0
+    pandas>=2.0.0
+    ```
+  </Step>
+
+  <Step title="Create Dockerfile.ml">
+    Use the Dockerfile example shown above or create your own with your ML framework.
+  </Step>
+
+  <Step title="Run training">
+    ```bash
+    python train.py
+    ```
+    
+    Buildr will:
+    1. Build a Docker image with GPU support
+    2. Mount your code into the container
+    3. Allocate requested resources (GPU, memory, CPU)
+    4. Run the training job
+    5. Stream logs and metrics to your terminal
+  </Step>
+
+  <Step title="Access trained model">
+    The model is saved inside the container at `./models/sentiment-classifier.h5`
+    
+    To persist it, mount a volume:
+    ```python
+    runtime={
+        'gpu': True,
+        'volumes': [{'host': './models', 'container': '/app/models'}]
+    }
+    ```
+  </Step>
+</Steps>
+
+## GPU Support
+
+To use GPU acceleration:
+
+<Steps>
+  <Step title="Install NVIDIA Docker">
+    ```bash
+    # Install NVIDIA Container Toolkit
+    distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+    curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
+    curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | \
+      sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+    
+    sudo apt-get update
+    sudo apt-get install -y nvidia-docker2
+    sudo systemctl restart docker
+    ```
+  </Step>
+
+  <Step title="Enable GPU in configuration">
+    ```python
+    runtime={'gpu': True}
+    ```
+  </Step>
+
+  <Step title="Verify GPU access">
+    Your training script will log:
+    ```
+    GPU Available: [PhysicalDevice(name='/physical_device:GPU:0', device_type='GPU')]
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  Test GPU access with a simple script first: `tf.config.list_physical_devices('GPU')`
+</Tip>
+
+## Advanced ML Patterns
+
+### Hyperparameter Tuning
+
+Run multiple training jobs with different hyperparameters:
+
+```python
+configurations = [
+    {'learning_rate': 0.001, 'batch_size': 32},
+    {'learning_rate': 0.0001, 'batch_size': 64},
+    {'learning_rate': 0.01, 'batch_size': 16},
+]
+
+for i, config in enumerate(configurations):
+    @Containerize(
+        package={'name': f'{model_name}-{i}', 'repository': repository},
+        runtime={'gpu': True, 'memory': '4Gi'}
+    )
+    def train_with_config():
+        return train_model(**config)
+    
+    train_with_config()
+```
+
+### Distributed Training
+
+Scale training across multiple nodes:
+
+```python
+@Containerize(
+    package={'name': 'distributed-training', 'repository': repository},
+    runtime={
+        'executor': 'metaparticle',
+        'replicas': 4,  # 4 training workers
+        'gpu': True,
+        'memory': '8Gi',
+        'env': {
+            'TF_CONFIG': json.dumps({
+                'cluster': {'worker': ['worker-0:2222', 'worker-1:2222', 
+                                       'worker-2:2222', 'worker-3:2222']},
+                'task': {'type': 'worker', 'index': 0}
+            })
+        }
+    }
+)
+def distributed_train():
+    strategy = tf.distribute.MultiWorkerMirroredStrategy()
+    with strategy.scope():
+        model = create_model()
+    # ... training code
+```
+
+### Model Inference Service
+
+Deploy trained model as a web service:
+
+```python
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
+model = tf.keras.models.load_model('./models/sentiment-classifier.h5')
+
+@app.route('/predict', methods=['POST'])
+def predict():
+    data = request.json['data']
+    predictions = model.predict(data)
+    return jsonify({'predictions': predictions.tolist()})
+
+@Containerize(
+    package={'name': 'ml-inference', 'repository': repository, 'publish': True},
+    runtime={'ports': [5000], 'public': True, 'replicas': 3, 'memory': '2Gi'}
+)
+def serve():
+    app.run(host='0.0.0.0', port=5000)
+
+if __name__ == '__main__':
+    serve()
+```
+
+## Best Practices for ML Workloads
+
+<Steps>
+  <Step title="Version your datasets and models">
+    ```python
+    package={
+        'name': f'{model_name}-v{version}',
+        'repository': repository
+    }
+    ```
+  </Step>
+
+  <Step title="Use appropriate resource limits">
+    - Small models: 2GB memory, 1-2 CPUs
+    - Medium models: 4-8GB memory, 2-4 CPUs, 1 GPU
+    - Large models (BERT, GPT): 16GB+ memory, 4+ CPUs, 2+ GPUs
+  </Step>
+
+  <Step title="Implement checkpointing">
+    ```python
+    callbacks = [
+        tf.keras.callbacks.ModelCheckpoint(
+            'checkpoints/model-{epoch:02d}.h5',
+            save_best_only=True
+        )
+    ]
+    model.fit(..., callbacks=callbacks)
+    ```
+  </Step>
+
+  <Step title="Log metrics and experiments">
+    Use tools like TensorBoard, MLflow, or Weights & Biases:
+    ```python
+    callbacks.append(tf.keras.callbacks.TensorBoard(log_dir='./logs'))
+    ```
+  </Step>
+</Steps>

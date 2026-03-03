@@ -1,0 +1,211 @@
+---
+title: Basic Usage
+description: Learn how to use the @Containerize decorator to containerize your Python applications
+---
+
+The `@Containerize` decorator is the core feature of Buildr that automatically containerizes your Python applications. This guide covers the fundamental usage patterns to get you started.
+
+## Quick Start
+
+The simplest way to use Buildr is to decorate your main function with `@Containerize`:
+
+```python
+from metaparticle_pkg import Containerize
+
+@Containerize(
+    package={'repository': 'your-dockerhub-username'}
+)
+def main():
+    print("Hello from a container!")
+
+if __name__ == '__main__':
+    main()
+```
+
+<Tip>
+The `repository` parameter in `PackageOptions` is the only required field. It specifies your Docker registry repository (e.g., your Docker Hub username).
+</Tip>
+
+## How It Works
+
+When you run your decorated application, Buildr:
+
+<Steps>
+  <Step title="Detects the environment">
+    Checks if the code is already running inside a container by examining `/proc/1/cgroup` or the `METAPARTICLE_IN_CONTAINER` environment variable.
+  </Step>
+  
+  <Step title="Generates a Dockerfile">
+    If not in a container, creates a Dockerfile based on your configuration (or uses a custom one if provided).
+  </Step>
+  
+  <Step title="Builds the image">
+    Uses the Docker builder to create a container image tagged as `{repository}/{name}:latest`.
+  </Step>
+  
+  <Step title="Runs the container">
+    Launches the container using the specified executor (Docker by default).
+  </Step>
+  
+  <Step title="Streams logs">
+    Captures and displays the container's output in real-time.
+  </Step>
+</Steps>
+
+## Basic Configuration Options
+
+### Package Options
+
+The `package` parameter accepts a dictionary with the following options:
+
+```python
+@Containerize(
+    package={
+        'repository': 'myusername',      # Required: Docker registry repository
+        'name': 'my-app',                 # Optional: Container name (defaults to directory name)
+        'builder': 'docker',              # Optional: Builder to use (default: 'docker')
+        'publish': False,                 # Optional: Push image to registry (default: False)
+        'verbose': True,                  # Optional: Verbose logging (default: True)
+        'quiet': False,                   # Optional: Suppress output (default: False)
+        'py_version': 3                   # Optional: Python version for base image (default: 3)
+    }
+)
+def main():
+    # Your application code
+    pass
+```
+
+<Warning>
+If you set `publish: True`, the image will be pushed to your Docker registry. Ensure you're authenticated with `docker login` before running.
+</Warning>
+
+### Runtime Options
+
+The `runtime` parameter controls how the container executes:
+
+```python
+@Containerize(
+    package={'repository': 'myusername'},
+    runtime={
+        'executor': 'docker',   # Optional: 'docker' or 'metaparticle' (default: 'docker')
+        'replicas': 0,          # Optional: Number of replicas (default: 0)
+        'ports': [],            # Optional: List of ports to expose (default: [])
+        'public': False         # Optional: Make service public (default: False)
+    }
+)
+def main():
+    # Your application code
+    pass
+```
+
+## Exposing Ports
+
+To run a web application, expose ports using the `ports` option:
+
+```python
+from metaparticle_pkg import Containerize
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route('/')
+def hello():
+    return "Hello from containerized Flask!"
+
+@Containerize(
+    package={'repository': 'myusername'},
+    runtime={'ports': [5000]}
+)
+def main():
+    app.run(host='0.0.0.0', port=5000)
+
+if __name__ == '__main__':
+    main()
+```
+
+With the Docker executor, ports are automatically mapped to the same port on the host (e.g., `5000:5000`).
+
+## Container Detection
+
+Buildr automatically detects if it's running inside a container. You can also manually control this:
+
+<Tabs>
+  <Tab title="Auto-detection">
+    By default, Buildr checks `/proc/1/cgroup` for `docker` or `kubepods` strings.
+    
+    ```python
+    # No configuration needed - automatic detection
+    @Containerize(package={'repository': 'myusername'})
+    def main():
+        print("This runs in a container")
+    ```
+  </Tab>
+  
+  <Tab title="Manual override">
+    Set the `METAPARTICLE_IN_CONTAINER` environment variable:
+    
+    ```bash
+    # Force detection as "in container"
+    export METAPARTICLE_IN_CONTAINER=true
+    
+    # Force detection as "not in container"
+    export METAPARTICLE_IN_CONTAINER=false
+    ```
+    
+    Valid values: `'true'`, `'1'`, `'false'`, `'0'`
+  </Tab>
+</Tabs>
+
+## Managing Container Lifecycle
+
+Buildr automatically handles signal interrupts (SIGINT/Ctrl+C):
+
+```python
+import time
+from metaparticle_pkg import Containerize
+
+@Containerize(package={'repository': 'myusername'})
+def main():
+    print("Starting long-running process...")
+    while True:
+        print("Working...")
+        time.sleep(5)
+
+if __name__ == '__main__':
+    main()
+```
+
+When you press Ctrl+C, the decorator's signal handler will:
+1. Call `runner.cancel()` to stop the container
+2. Exit the process cleanly
+
+## Auto-generated Image Name
+
+If you don't specify a `name` in `PackageOptions`, Buildr uses the current directory name:
+
+```python
+# In directory /home/user/my-app/
+@Containerize(package={'repository': 'myusername'})
+def main():
+    pass
+
+# Image will be: myusername/my-app:latest
+```
+
+Source reference: option.py:46
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Advanced Configuration" icon="sliders" href="/guides/advanced-configuration">
+    Learn about replicas, sharding, and job specifications
+  </Card>
+  
+  <Card title="Custom Dockerfiles" icon="docker" href="/guides/custom-dockerfiles">
+    Use your own Dockerfile instead of auto-generation
+  </Card>
+  
+  <Card title="Kubernetes Deployment" icon="cloud" href="/guides/kubernetes-deployment">
+    Deploy to Kubernetes with MetaparticleRunner
+  </Card>
+</CardGroup>

@@ -1,0 +1,762 @@
+---
+title: "Runner System"
+description: "Explore Buildr's runner system for executing containers locally with Docker or on Kubernetes with Metaparticle"
+---
+
+## Overview
+
+Runners are responsible for executing your containerized application in a target environment. Buildr supports multiple execution backends, allowing you to run the same code locally for development or deploy to Kubernetes for production.
+
+## Runner Selection
+
+Runners are selected using a factory pattern based on the `executor` parameter in runtime options:
+
+```python runner/__init__.py:5-11
+def select(spec):
+    if spec == 'docker':
+        return DockerRunner()
+    if spec == 'metaparticle':
+        return MetaparticleRunner()
+
+    raise Exception('Unknown spec {}'.format(spec))
+```
+
+<CardGroup cols={2}>
+  <Card title="DockerRunner" icon="docker">
+    Runs containers locally using Docker Engine (default)
+  </Card>
+  <Card title="MetaparticleRunner" icon="dharmachakra">
+    Deploys to Kubernetes using Metaparticle compiler
+  </Card>
+</CardGroup>
+
+## DockerRunner
+
+The `DockerRunner` executes containers on your local Docker daemon, ideal for development and testing.
+
+### Implementation
+
+```python docker_runner.py:8-61
+class DockerRunner:
+    def __init__(self):
+        self.docker_client = None
+
+    def run(self, img, name, options):
+        if self.docker_client is None:
+            self.docker_client = APIClient(version='auto')
+
+        ports = []
+        host_config = None
+
+        # Prepare port configuration
+        if options.ports is not None and len(options.ports) > 0:
+            for port_number in options.ports:
+                ports.append(port_number)
+
+            host_config = self.docker_client.create_host_config(
+                port_bindings={p: p for p in ports}
+            )
+
+        # Launch docker container
+        container = self.docker_client.create_container(
+            img,
+            name=name,
+            ports=ports,
+            host_config=host_config,
+        )
+        self.docker_client.start(container=container.get('Id'))
+
+        self.container = container
+
+        logger.info('Starting container {}'.format(container))
+
+    def logs(self, *args, **kwargs):
+        if self.docker_client is None:
+            self.docker_client = APIClient(version='auto')
+
+        # seems like we are hitting bug
+        # https://github.com/docker/docker-py/issues/300
+        log_stream = self.docker_client.logs(
+            self.container.get('Id'),
+            stream=True,
+            follow=True
+        )
+
+        for line in log_stream:
+            logger.info(line)
+
+    def cancel(self, name):
+        if self.docker_client is None:
+            self.docker_client = APIClient(version='auto')
+        self.docker_client.kill(self.container.get('Id'))
+        self.docker_client.remove_container(self.container.get('Id'))
+```
+
+### Running Containers
+
+The `run()` method creates and starts a Docker container:
+
+```python docker_runner.py:12-39
+def run(self, img, name, options):
+    if self.docker_client is None:
+        self.docker_client = APIClient(version='auto')
+
+    ports = []
+    host_config = None
+
+    # Prepare port configuration
+    if options.ports is not None and len(options.ports) > 0:
+        for port_number in options.ports:
+            ports.append(port_number)
+
+        host_config = self.docker_client.create_host_config(
+            port_bindings={p: p for p in ports}
+        )
+
+    # Launch docker container
+    container = self.docker_client.create_container(
+        img,
+        name=name,
+        ports=ports,
+        host_config=host_config,
+    )
+    self.docker_client.start(container=container.get('Id'))
+
+    self.container = container
+
+    logger.info('Starting container {}'.format(container))
+```
+
+<Steps>
+  <Step title="Initialize Docker Client">
+    Lazily initializes the Docker API client with automatic version negotiation
+  </Step>
+  
+  <Step title="Configure Port Mappings">
+    If ports are specified in runtime options, creates port bindings that map container ports to host ports:
+    
+    ```python
+    # For ports=[8080, 9000]:
+    port_bindings = {8080: 8080, 9000: 9000}
+    ```
+  </Step>
+  
+  <Step title="Create Container">
+    Creates the container with:
+    - `img`: Image to run
+    - `name`: Container name
+    - `ports`: Exposed ports
+    - `host_config`: Port bindings configuration
+  </Step>
+  
+  <Step title="Start Container">
+    Starts the created container using its ID
+  </Step>
+  
+  <Step title="Store Reference">
+    Saves the container reference for log streaming and cancellation
+  </Step>
+</Steps>
+
+### Port Mapping
+
+Port configuration creates bidirectional bindings:
+
+<Tabs>
+  <Tab title="Single Port">
+    ```python
+    @Containerize(
+        package={'name': 'web', 'repository': 'myrepo'},
+        runtime={'ports': [8080]}
+    )
+    def main():
+        # Container port 8080 maps to host port 8080
+        # Access at http://localhost:8080
+        ...
+    ```
+  </Tab>
+  
+  <Tab title="Multiple Ports">
+    ```python
+    @Containerize(
+        package={'name': 'app', 'repository': 'myrepo'},
+        runtime={'ports': [8080, 9000, 3000]}
+    )
+    def main():
+        # All three ports mapped to same port numbers on host
+        # http://localhost:8080
+        # http://localhost:9000  
+        # http://localhost:3000
+        ...
+    ```
+  </Tab>
+  
+  <Tab title="No Ports">
+    ```python
+    @Containerize(
+        package={'name': 'worker', 'repository': 'myrepo'}
+        # No runtime.ports specified
+    )
+    def main():
+        # Container runs isolated, no external access
+        # Good for background workers, batch jobs
+        ...
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  Currently, DockerRunner maps each container port to the same port number on the host. Custom port mapping (e.g., container:8080 → host:3000) is not yet supported.
+</Note>
+
+### Log Streaming
+
+The `logs()` method streams container output to the console:
+
+```python docker_runner.py:41-54
+def logs(self, *args, **kwargs):
+    if self.docker_client is None:
+        self.docker_client = APIClient(version='auto')
+
+    # seems like we are hitting bug
+    # https://github.com/docker/docker-py/issues/300
+    log_stream = self.docker_client.logs(
+        self.container.get('Id'),
+        stream=True,
+        follow=True
+    )
+
+    for line in log_stream:
+        logger.info(line)
+```
+
+<AccordionGroup>
+  <Accordion title="Stream Mode">
+    `stream=True` returns a generator that yields log lines as they're produced, rather than waiting for the container to exit.
+  </Accordion>
+  
+  <Accordion title="Follow Mode">
+    `follow=True` keeps the stream open, continuously tailing logs like `docker logs -f`.
+  </Accordion>
+  
+  <Accordion title="Known Issue">
+    The code comments reference docker-py issue #300, related to log streaming behavior. Despite the bug, the current implementation works correctly for most use cases.
+  </Accordion>
+</AccordionGroup>
+
+### Cancellation
+
+The `cancel()` method stops and removes the container:
+
+```python docker_runner.py:56-61
+def cancel(self, name):
+    if self.docker_client is None:
+        self.docker_client = APIClient(version='auto')
+    self.docker_client.kill(self.container.get('Id'))
+    self.docker_client.remove_container(self.container.get('Id'))
+```
+
+<Steps>
+  <Step title="Kill Container">
+    Sends SIGKILL to the container process (immediate termination)
+  </Step>
+  
+  <Step title="Remove Container">
+    Deletes the stopped container and its filesystem
+  </Step>
+</Steps>
+
+<Warning>
+  `kill()` forcefully terminates the container without graceful shutdown. Consider using `stop()` for graceful termination if your application needs cleanup time.
+</Warning>
+
+## MetaparticleRunner
+
+The `MetaparticleRunner` deploys your application to Kubernetes using the Metaparticle compiler:
+
+### Implementation
+
+```python metaparticle.py:6-63
+class MetaparticleRunner:
+    def cancel(self, name):
+        subprocess.check_call(['mp-compiler', '-f', '.metaparticle/spec.json', '--delete'])
+
+    def logs(self, name):
+        subprocess.check_call(['mp-compiler', '-f', '.metaparticle/spec.json', '--deploy=false', '--attach=true'])
+
+    def ports(self, portArray):
+        result = []
+        for port in portArray:
+            result.append({
+                'number': port,
+                'protocol': 'TCP'
+            })
+        return result
+
+    def run(self, img, name, options):
+        svc = {
+            "name": name,
+            "guid": 1234567,
+        }
+
+        if options.replicas > 0 or options.shardSpec is not None:
+            svc["services"] = [
+                {
+                    "name": name,
+                    "replicas": options.replicas,
+                    "shardSpec": options.shardSpec,
+                    "containers": [
+                        {"image": img}
+                    ],
+                    "ports": self.ports(options.ports)
+                }
+            ]
+            svc["serve"] = {
+                "name": name,
+                "public": options.public
+            }
+
+        if options.jobSpec is not None:
+            svc["jobs"] = [
+                {
+                    "name": name,
+                    "replicas": options.jobSpec['iterations'],
+                    "containers": [
+                        {"image": img}
+                    ]
+                }
+            ]
+
+        if not os.path.exists('.metaparticle'):
+            os.makedirs('.metaparticle')
+
+        with open('.metaparticle/spec.json', 'w') as out:
+            json.dump(svc, out)
+
+        subprocess.check_call(['mp-compiler', '-f', '.metaparticle/spec.json'])
+```
+
+### Kubernetes Deployment
+
+The `run()` method generates a Metaparticle specification and deploys to Kubernetes:
+
+<Steps>
+  <Step title="Create Base Spec">
+    Initializes the Metaparticle spec with name and GUID:
+    
+    ```python metaparticle.py:23-26
+    svc = {
+        "name": name,
+        "guid": 1234567,
+    }
+    ```
+  </Step>
+  
+  <Step title="Add Service Configuration">
+    If replicas or sharding are specified, creates a service deployment:
+    
+    ```python metaparticle.py:28-43
+    if options.replicas > 0 or options.shardSpec is not None:
+        svc["services"] = [
+            {
+                "name": name,
+                "replicas": options.replicas,
+                "shardSpec": options.shardSpec,
+                "containers": [
+                    {"image": img}
+                ],
+                "ports": self.ports(options.ports)
+            }
+        ]
+        svc["serve"] = {
+            "name": name,
+            "public": options.public
+        }
+    ```
+  </Step>
+  
+  <Step title="Add Job Configuration">
+    If jobSpec is provided, creates a Kubernetes Job:
+    
+    ```python metaparticle.py:45-54
+    if options.jobSpec is not None:
+        svc["jobs"] = [
+            {
+                "name": name,
+                "replicas": options.jobSpec['iterations'],
+                "containers": [
+                    {"image": img}
+                ]
+            }
+        ]
+    ```
+  </Step>
+  
+  <Step title="Write Spec File">
+    Saves the spec to `.metaparticle/spec.json`:
+    
+    ```python metaparticle.py:56-60
+    if not os.path.exists('.metaparticle'):
+        os.makedirs('.metaparticle')
+
+    with open('.metaparticle/spec.json', 'w') as out:
+        json.dump(svc, out)
+    ```
+  </Step>
+  
+  <Step title="Deploy to Kubernetes">
+    Invokes the Metaparticle compiler to deploy:
+    
+    ```python metaparticle.py:62
+    subprocess.check_call(['mp-compiler', '-f', '.metaparticle/spec.json'])
+    ```
+  </Step>
+</Steps>
+
+### Deployment Modes
+
+<Tabs>
+  <Tab title="Service Deployment">
+    Long-running service with replicas:
+    
+    ```python
+    @Containerize(
+        package={'name': 'web', 'repository': 'myrepo'},
+        runtime={
+            'executor': 'metaparticle',
+            'replicas': 3,
+            'ports': [8080],
+            'public': True
+        }
+    )
+    def main():
+        # Deployed as Kubernetes Deployment with 3 replicas
+        # Service exposed publicly
+        ...
+    ```
+    
+    Generates:
+    ```json
+    {
+      "name": "web",
+      "services": [{
+        "name": "web",
+        "replicas": 3,
+        "containers": [{"image": "myrepo/web:latest"}],
+        "ports": [{"number": 8080, "protocol": "TCP"}]
+      }],
+      "serve": {"name": "web", "public": true}
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Job Deployment">
+    Batch job with iterations:
+    
+    ```python
+    from metaparticle_pkg.option import JobSpec
+    
+    @Containerize(
+        package={'name': 'batch', 'repository': 'myrepo'},
+        runtime={
+            'executor': 'metaparticle',
+            'jobSpec': JobSpec(iterations=5)
+        }
+    )
+    def main():
+        # Deployed as Kubernetes Job with 5 completions
+        ...
+    ```
+    
+    Generates:
+    ```json
+    {
+      "name": "batch",
+      "jobs": [{
+        "name": "batch",
+        "replicas": 5,
+        "containers": [{"image": "myrepo/batch:latest"}]
+      }]
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Sharded Service">
+    Distributed service with sharding:
+    
+    ```python
+    from metaparticle_pkg.option import ShardSpec
+    
+    @Containerize(
+        package={'name': 'distributed', 'repository': 'myrepo'},
+        runtime={
+            'executor': 'metaparticle',
+            'shardSpec': ShardSpec(shards=4, shardExpression='.*')
+        }
+    )
+    def main():
+        # Deployed with 4 shards
+        ...
+    ```
+    
+    Generates:
+    ```json
+    {
+      "name": "distributed",
+      "services": [{
+        "name": "distributed",
+        "shardSpec": {
+          "shards": 4,
+          "shardExpression": ".*"
+        },
+        "containers": [{"image": "myrepo/distributed:latest"}]
+      }]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Port Configuration
+
+Metaparticle converts port numbers to Kubernetes port specs:
+
+```python metaparticle.py:13-20
+def ports(self, portArray):
+    result = []
+    for port in portArray:
+        result.append({
+            'number': port,
+            'protocol': 'TCP'
+        })
+    return result
+```
+
+```python
+# Input:
+runtime={'ports': [8080, 9000]}
+
+# Output:
+[
+    {'number': 8080, 'protocol': 'TCP'},
+    {'number': 9000, 'protocol': 'TCP'}
+]
+```
+
+<Note>
+  Currently only TCP protocol is supported. UDP ports require manual Kubernetes manifest editing.
+</Note>
+
+### Log Attachment
+
+The `logs()` method attaches to running pods without redeploying:
+
+```python metaparticle.py:10-11
+def logs(self, name):
+    subprocess.check_call(['mp-compiler', '-f', '.metaparticle/spec.json', '--deploy=false', '--attach=true'])
+```
+
+- `--deploy=false`: Skip deployment (assume already deployed)
+- `--attach=true`: Attach to logs of existing pods
+
+### Cleanup
+
+The `cancel()` method deletes Kubernetes resources:
+
+```python metaparticle.py:7-8
+def cancel(self, name):
+    subprocess.check_call(['mp-compiler', '-f', '.metaparticle/spec.json', '--delete'])
+```
+
+Deletes all resources created from the spec (Deployments, Services, Jobs, etc.).
+
+## Complete Examples
+
+### Local Docker Development
+
+```python
+from metaparticle_pkg import Containerize
+from six.moves import SimpleHTTPServer, socketserver
+
+@Containerize(
+    package={'name': 'dev-server', 'repository': 'myrepo'},
+    runtime={
+        'executor': 'docker',  # Run locally
+        'ports': [8080]
+    }
+)
+def main():
+    handler = SimpleHTTPServer.SimpleHTTPRequestHandler
+    httpd = socketserver.TCPServer(("", 8080), handler)
+    print('Server running on http://localhost:8080')
+    httpd.serve_forever()
+
+if __name__ == '__main__':
+    main()
+```
+
+<Steps>
+  <Step title="First Run">
+    Builds image and runs container locally
+    ```bash
+    $ python server.py
+    # Builds myrepo/dev-server:latest
+    # Runs container with port 8080 mapped
+    # Access at http://localhost:8080
+    ```
+  </Step>
+  
+  <Step title="Subsequent Runs">
+    Uses cached image (faster startup)
+  </Step>
+  
+  <Step title="Stop">
+    Press Ctrl+C to kill and remove container
+  </Step>
+</Steps>
+
+### Kubernetes Production Deployment
+
+```python
+from metaparticle_pkg import Containerize
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route('/')
+def hello():
+    return 'Hello from Kubernetes!'
+
+@Containerize(
+    package={
+        'name': 'prod-api',
+        'repository': 'gcr.io/myproject',
+        'publish': True  # Push to GCR
+    },
+    runtime={
+        'executor': 'metaparticle',  # Deploy to K8s
+        'replicas': 5,
+        'ports': [5000],
+        'public': True  # Create LoadBalancer service
+    }
+)
+def main():
+    app.run(host='0.0.0.0', port=5000)
+
+if __name__ == '__main__':
+    main()
+```
+
+<Steps>
+  <Step title="Build & Push">
+    Builds and pushes image to Google Container Registry
+  </Step>
+  
+  <Step title="Generate Spec">
+    Creates `.metaparticle/spec.json` with 5 replicas
+  </Step>
+  
+  <Step title="Deploy">
+    Metaparticle compiler creates:
+    - Kubernetes Deployment (5 pods)
+    - LoadBalancer Service (public IP)
+  </Step>
+  
+  <Step title="Monitor">
+    Streams logs from all replicas
+  </Step>
+</Steps>
+
+## Choosing a Runner
+
+<CardGroup cols={2}>
+  <Card title="Use DockerRunner When" icon="laptop-code">
+    - Developing locally
+    - Testing changes quickly
+    - Running on a single machine
+    - No scaling requirements
+    - Debugging containerization issues
+  </Card>
+  
+  <Card title="Use MetaparticleRunner When" icon="cloud">
+    - Deploying to production
+    - Need horizontal scaling
+    - Require high availability
+    - Want zero-downtime updates
+    - Running distributed systems
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Development/Production Parity">
+    Use the same container image in both environments:
+    
+    ```python
+    import os
+    
+    # Switch executor based on environment
+    executor = 'metaparticle' if os.getenv('ENV') == 'production' else 'docker'
+    
+    @Containerize(
+        package={'name': 'app', 'repository': 'myrepo'},
+        runtime={'executor': executor}
+    )
+    def main():
+        ...
+    ```
+  </Accordion>
+  
+  <Accordion title="Graceful Shutdown">
+    Handle SIGTERM in your application for clean shutdowns:
+    
+    ```python
+    import signal
+    import sys
+    
+    def shutdown_handler(signum, frame):
+        print('Shutting down gracefully...')
+        # Close connections, save state, etc.
+        sys.exit(0)
+    
+    signal.signal(signal.SIGTERM, shutdown_handler)
+    ```
+  </Accordion>
+  
+  <Accordion title="Resource Limits">
+    For Kubernetes deployments, set resource limits in your Metaparticle spec:
+    
+    ```json
+    {
+      "containers": [{
+        "image": "myrepo/app:latest",
+        "resources": {
+          "limits": {"cpu": "500m", "memory": "512Mi"},
+          "requests": {"cpu": "100m", "memory": "128Mi"}
+        }
+      }]
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Health Checks">
+    Implement health check endpoints for Kubernetes:
+    
+    ```python
+    @app.route('/health')
+    def health():
+        return {'status': 'healthy'}, 200
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture" href="/concepts/architecture" icon="diagram-project">
+    Understand the complete lifecycle
+  </Card>
+  <Card title="Containerization" href="/concepts/containerization" icon="docker">
+    Learn about image building
+  </Card>
+</CardGroup>

@@ -1,0 +1,136 @@
+---
+title: "@Containerize"
+description: "Decorator class for containerizing Python applications with Buildr"
+---
+
+## Overview
+
+The `Containerize` class is a Python decorator that automatically builds, packages, and runs your application in a container. When applied to a function, it handles all the containerization steps including Dockerfile generation, image building, and container execution.
+
+## Constructor
+
+```python
+Containerize(runtime={}, package={})
+```
+
+### Parameters
+
+<ParamField path="runtime" type="dict" default="{}">
+  Runtime configuration options. See [RuntimeOptions](/api/runtime-options) for available fields.
+</ParamField>
+
+<ParamField path="package" type="dict" default="{}">
+  Package configuration options. See [PackageOptions](/api/package-options) for available fields.
+</ParamField>
+
+## Usage
+
+### Basic Example
+
+```python
+from buildr_pkg.containerize import Containerize
+
+@Containerize(
+    package={
+        'repository': 'myrepo',
+        'name': 'myapp'
+    },
+    runtime={
+        'executor': 'docker',
+        'ports': [8080]
+    }
+)
+def main():
+    print("Hello from container!")
+
+if __name__ == '__main__':
+    main()
+```
+
+### With Publishing
+
+```python
+@Containerize(
+    package={
+        'repository': 'myrepo',
+        'name': 'myapp',
+        'publish': True,
+        'builder': 'docker'
+    },
+    runtime={
+        'executor': 'kubernetes',
+        'replicas': 3,
+        'ports': [8080],
+        'public': True
+    }
+)
+def serve():
+    # Your application code
+    pass
+```
+
+## Behavior
+
+When the decorated function is called:
+
+1. **Container Detection**: Checks if already running inside a container
+2. **Direct Execution**: If in container, executes the wrapped function directly
+3. **Containerization**: If not in container:
+   - Generates a Dockerfile (or uses custom dockerfile if provided)
+   - Builds the container image
+   - Publishes the image if `publish=True`
+   - Runs the container using the configured executor
+   - Returns container logs
+
+## Methods
+
+### \_\_call\_\_(func)
+
+Makes the class instance callable as a decorator.
+
+<ParamField path="func" type="function" required>
+  The function to containerize
+</ParamField>
+
+**Returns**: A wrapped function that handles containerization
+
+## Properties
+
+### image
+
+The full image name constructed from package repository and name.
+
+**Format**: `{repository}/{name}:latest`
+
+### builder
+
+The selected builder instance based on `package.builder` configuration.
+
+### runner
+
+The selected runner instance based on `runtime.executor` configuration.
+
+## Signal Handling
+
+The decorator automatically handles `SIGINT` (Ctrl+C) by:
+- Canceling the running container
+- Cleaning up resources
+- Exiting gracefully
+
+## Custom Dockerfiles
+
+You can provide a custom Dockerfile by setting the `dockerfile` parameter in PackageOptions:
+
+```python
+@Containerize(
+    package={
+        'repository': 'myrepo',
+        'name': 'myapp',
+        'dockerfile': './custom.Dockerfile'
+    }
+)
+def main():
+    pass
+```
+
+If not provided, a default Dockerfile is generated using the Python version specified in `py_version`.

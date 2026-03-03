@@ -1,0 +1,190 @@
+---
+title: 'Simple Application'
+description: 'Build and containerize a simple Python application with Buildr'
+---
+
+## Overview
+
+This example demonstrates the basics of containerizing a Python application using Buildr. You'll learn how to use the `@Containerize` decorator to automatically build and run your code in containers.
+
+## Complete Example
+
+Here's a complete example showing two different containerized functions:
+
+```python
+from metaparticle_pkg import Containerize
+import time
+
+package_repo = 'repo'
+package_name = 'something'
+sleep_time = 10
+
+
+@Containerize(
+    package={'name': package_name, 'repository': package_repo},
+    runtime={'ports': [80, 8080]}
+)
+def container_with_port():
+    print('hello container_with_port')
+
+    for i in range(sleep_time):
+        print('Sleeping ... {} sec'.format(i))
+        time.sleep(1)
+
+
+@Containerize(
+    package={'name': package_name, 'repository': package_repo, 'publish': True}
+)
+def hihi():
+    print('hello world!')
+
+    for i in range(sleep_time):
+        print('Sleeping ... {} sec'.format(i))
+        time.sleep(1)
+
+
+if __name__ == '__main__':
+    hihi()
+    container_with_port()
+```
+
+## Step-by-Step Breakdown
+
+<Steps>
+  <Step title="Import the Containerize decorator">
+    ```python
+    from metaparticle_pkg import Containerize
+    import time
+    ```
+    
+    Import the `Containerize` decorator from Buildr. This is the core component that will handle containerization.
+  </Step>
+
+  <Step title="Configure package settings">
+    ```python
+    package_repo = 'repo'
+    package_name = 'something'
+    ```
+    
+    Set up your package configuration:
+    - **repository**: The Docker registry repository where your image will be stored
+    - **name**: The name of your container image
+    
+    <Note>
+      In production, use a real Docker registry like `docker.io/yourusername` or your private registry URL.
+    </Note>
+  </Step>
+
+  <Step title="Containerize with port exposure">
+    ```python
+    @Containerize(
+        package={'name': package_name, 'repository': package_repo},
+        runtime={'ports': [80, 8080]}
+    )
+    def container_with_port():
+        print('hello container_with_port')
+        for i in range(sleep_time):
+            print('Sleeping ... {} sec'.format(i))
+            time.sleep(1)
+    ```
+    
+    The first function demonstrates **port exposure**:
+    - **runtime.ports**: Array of ports to expose from the container `[80, 8080]`
+    - When the container runs, these ports will be accessible from outside
+    
+    <Tip>
+      Use port exposure when your application needs to accept incoming network connections, such as web servers or APIs.
+    </Tip>
+  </Step>
+
+  <Step title="Containerize with publishing">
+    ```python
+    @Containerize(
+        package={'name': package_name, 'repository': package_repo, 'publish': True}
+    )
+    def hihi():
+        print('hello world!')
+        for i in range(sleep_time):
+            print('Sleeping ... {} sec'.format(i))
+            time.sleep(1)
+    ```
+    
+    The second function demonstrates **image publishing**:
+    - **package.publish**: Set to `True` to push the built image to the Docker registry
+    - Without this, the image is only built locally
+  </Step>
+
+  <Step title="Run the application">
+    ```python
+    if __name__ == '__main__':
+        hihi()
+        container_with_port()
+    ```
+    
+    Execute both containerized functions. Buildr will:
+    1. Detect it's not running in a container
+    2. Generate a Dockerfile automatically
+    3. Build the Docker image
+    4. Run the container
+    5. Stream logs back to your terminal
+  </Step>
+</Steps>
+
+## Configuration Options Explained
+
+### Package Options
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `name` | string | Container image name |
+| `repository` | string | Docker registry repository |
+| `publish` | boolean | Whether to push the image to the registry (default: `false`) |
+
+### Runtime Options
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `ports` | array | List of ports to expose from the container |
+| `executor` | string | Container runtime executor (default: `docker`) |
+| `replicas` | number | Number of container instances to run |
+
+## Running the Example
+
+<Steps>
+  <Step title="Save the code">
+    Save the example code to a file named `example.py`
+  </Step>
+
+  <Step title="Create requirements.txt">
+    ```txt
+    metaparticle-pkg
+    ```
+  </Step>
+
+  <Step title="Run the application">
+    ```bash
+    python example.py
+    ```
+    
+    Buildr will automatically:
+    - Generate a Dockerfile
+    - Build the container image
+    - Run the containerized application
+    - Display the output
+  </Step>
+</Steps>
+
+## What Happens Behind the Scenes
+
+When you run this example:
+
+1. **Detection**: Buildr checks if it's already running inside a container
+2. **Dockerfile Generation**: Creates a Python-based Dockerfile if needed
+3. **Build**: Builds the Docker image with tag `repo/something:latest`
+4. **Publish** (if enabled): Pushes the image to the registry
+5. **Run**: Starts the container with specified runtime options
+6. **Logs**: Streams container output to your terminal
+
+<Note>
+  The first function call (`hihi()`) will publish the image because `publish: True` is set. The second call (`container_with_port()`) will only run locally.
+</Note>

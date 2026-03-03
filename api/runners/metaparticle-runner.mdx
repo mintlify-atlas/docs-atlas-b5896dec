@@ -1,0 +1,414 @@
+---
+title: 'MetaparticleRunner'
+description: 'Deploy Buildr applications to Kubernetes using Metaparticle'
+---
+
+## Overview
+
+The `MetaparticleRunner` class enables deployment of containerized applications to Kubernetes using the Metaparticle framework. This runner is designed for production deployments, supporting advanced features like service replication, sharding, job scheduling, and public service exposure.
+
+## When to Use MetaparticleRunner
+
+Use `MetaparticleRunner` when you:
+- Need to deploy to Kubernetes clusters
+- Require service replication for high availability
+- Want to implement sharding strategies
+- Need to run batch jobs with multiple iterations
+- Want to expose services publicly
+
+## Class Reference
+
+### MetaparticleRunner
+
+Initializes a new Metaparticle runner instance.
+
+```python
+from buildr_pkg.runner import MetaparticleRunner
+
+runner = MetaparticleRunner()
+```
+
+## Methods
+
+### run()
+
+Deploys a containerized application to Kubernetes with the specified configuration.
+
+```python
+runner.run(img, name, options)
+```
+
+**Parameters:**
+
+<ParamField path="img" type="string" required>
+  The container image to deploy (e.g., `"myapp:latest"` or `"gcr.io/project/app:v1"`)
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Name for the service/job in Kubernetes
+</ParamField>
+
+<ParamField path="options" type="object" required>
+  Configuration object with the following properties:
+  
+  <ParamField path="options.replicas" type="integer">
+    Number of service replicas to run. Set to 0 if deploying a job instead of a service.
+  </ParamField>
+  
+  <ParamField path="options.shardSpec" type="object">
+    Sharding specification for distributing workload across replicas.
+    
+    When not `None`, enables sharding strategy for the service.
+  </ParamField>
+  
+  <ParamField path="options.ports" type="list">
+    List of port numbers to expose. Automatically configured with TCP protocol.
+  </ParamField>
+  
+  <ParamField path="options.public" type="boolean">
+    Whether to expose the service publicly (creates public load balancer).
+  </ParamField>
+  
+  <ParamField path="options.jobSpec" type="object">
+    Job specification for batch workloads.
+    
+    <ParamField path="options.jobSpec.iterations" type="integer">
+      Number of job replicas (iterations) to run.
+    </ParamField>
+    
+    When `jobSpec` is provided, creates a Kubernetes Job instead of a Service.
+  </ParamField>
+</ParamField>
+
+**Behavior:**
+- Creates a Metaparticle service specification JSON file
+- Configures either a service deployment or job based on options
+- Stores specification in `.metaparticle/spec.json`
+- Invokes `mp-compiler` to deploy to Kubernetes
+- Creates the `.metaparticle` directory if it doesn't exist
+
+**Service vs Job Deployment:**
+- **Service**: Created when `replicas > 0` or `shardSpec` is defined
+- **Job**: Created when `jobSpec` is provided
+
+**Example - Service Deployment:**
+
+```python
+from buildr_pkg.runner import MetaparticleRunner
+
+class Options:
+    replicas = 3
+    shardSpec = None
+    ports = [8080]
+    public = True
+    jobSpec = None
+
+runner = MetaparticleRunner()
+runner.run(
+    img="gcr.io/myproject/webapp:v1.0",
+    name="web-service",
+    options=Options()
+)
+```
+
+**Example - Job Deployment:**
+
+```python
+from buildr_pkg.runner import MetaparticleRunner
+
+class Options:
+    replicas = 0
+    shardSpec = None
+    ports = []
+    public = False
+    jobSpec = {
+        'iterations': 5
+    }
+
+runner = MetaparticleRunner()
+runner.run(
+    img="gcr.io/myproject/batch-processor:latest",
+    name="data-processor",
+    options=Options()
+)
+```
+
+### logs()
+
+Attaches to and displays logs from the deployed application.
+
+```python
+runner.logs(name)
+```
+
+**Parameters:**
+
+<ParamField path="name" type="string" required>
+  Name of the service/job to retrieve logs from
+</ParamField>
+
+**Behavior:**
+- Reads the Metaparticle specification from `.metaparticle/spec.json`
+- Attaches to the running containers without deploying
+- Streams logs in real-time from Kubernetes pods
+- Uses `mp-compiler` with `--deploy=false` and `--attach=true` flags
+
+**Example:**
+
+```python
+runner = MetaparticleRunner()
+runner.run(img="myapp:latest", name="myapp", options)
+
+# View logs from the deployed application
+runner.logs("myapp")
+```
+
+<Note>
+  The `logs()` method requires a valid `.metaparticle/spec.json` file from a previous `run()` call.
+</Note>
+
+### cancel()
+
+Deletes the deployed service or job from Kubernetes.
+
+```python
+runner.cancel(name)
+```
+
+**Parameters:**
+
+<ParamField path="name" type="string" required>
+  Name of the service/job to delete
+</ParamField>
+
+**Behavior:**
+- Reads the Metaparticle specification from `.metaparticle/spec.json`
+- Deletes all Kubernetes resources associated with the deployment
+- Uses `mp-compiler` with `--delete` flag
+- Removes pods, services, deployments, and jobs
+
+**Example:**
+
+```python
+runner = MetaparticleRunner()
+runner.run(img="myapp:latest", name="myapp", options)
+
+# Later, delete the deployment
+runner.cancel("myapp")
+```
+
+### ports()
+
+Internal helper method that converts port numbers to Metaparticle port specifications.
+
+```python
+runner.ports(portArray)
+```
+
+**Parameters:**
+
+<ParamField path="portArray" type="list" required>
+  List of port numbers
+</ParamField>
+
+**Returns:**
+
+List of port specification objects with `number` and `protocol` fields.
+
+**Example:**
+
+```python
+# Internal usage
+port_specs = runner.ports([8080, 8443])
+# Returns: [{"number": 8080, "protocol": "TCP"}, {"number": 8443, "protocol": "TCP"}]
+```
+
+<Note>
+  This is an internal method used by `run()`. You typically don't need to call it directly.
+</Note>
+
+## Configuration Examples
+
+### Simple Web Service
+
+```python
+from buildr_pkg.runner import MetaparticleRunner
+
+class Options:
+    replicas = 2
+    shardSpec = None
+    ports = [80]
+    public = True
+    jobSpec = None
+
+runner = MetaparticleRunner()
+runner.run(
+    img="nginx:latest",
+    name="nginx-service",
+    options=Options()
+)
+```
+
+### Sharded Service with Multiple Ports
+
+```python
+from buildr_pkg.runner import MetaparticleRunner
+
+class Options:
+    replicas = 5
+    shardSpec = {
+        'shards': 5,
+        'strategy': 'hash'
+    }
+    ports = [8080, 9090]  # App port and metrics port
+    public = True
+    jobSpec = None
+
+runner = MetaparticleRunner()
+runner.run(
+    img="gcr.io/myproject/sharded-app:v2.0",
+    name="sharded-service",
+    options=Options()
+)
+```
+
+### Batch Job Processing
+
+```python
+from buildr_pkg.runner import MetaparticleRunner
+
+class Options:
+    replicas = 0
+    shardSpec = None
+    ports = []
+    public = False
+    jobSpec = {
+        'iterations': 10  # Run 10 parallel job instances
+    }
+
+runner = MetaparticleRunner()
+runner.run(
+    img="mycompany/data-processor:latest",
+    name="nightly-batch-job",
+    options=Options()
+)
+```
+
+### Internal Service (Not Public)
+
+```python
+from buildr_pkg.runner import MetaparticleRunner
+
+class Options:
+    replicas = 3
+    shardSpec = None
+    ports = [6379]  # Redis port
+    public = False  # Internal only
+    jobSpec = None
+
+runner = MetaparticleRunner()
+runner.run(
+    img="redis:7-alpine",
+    name="redis-cache",
+    options=Options()
+)
+```
+
+## Complete Workflow Example
+
+```python
+from buildr_pkg.runner import MetaparticleRunner
+import time
+
+class Options:
+    replicas = 3
+    shardSpec = None
+    ports = [8080]
+    public = True
+    jobSpec = None
+
+runner = MetaparticleRunner()
+
+try:
+    # Deploy the service
+    print("Deploying to Kubernetes...")
+    runner.run(
+        img="gcr.io/myproject/api:v1.5.0",
+        name="api-service",
+        options=Options()
+    )
+    
+    # Wait for deployment
+    time.sleep(10)
+    
+    # View logs
+    print("Streaming logs...")
+    runner.logs("api-service")
+    
+except KeyboardInterrupt:
+    # Clean up on exit
+    print("\nCleaning up deployment...")
+    runner.cancel("api-service")
+    print("Service deleted from Kubernetes")
+```
+
+## Implementation Details
+
+**Metaparticle Compiler:**
+- Uses `mp-compiler` command-line tool
+- Specification file stored in `.metaparticle/spec.json`
+- Runs as subprocess with `check_call` (raises exception on failure)
+
+**Service Specification Structure:**
+```json
+{
+  "name": "service-name",
+  "guid": 1234567,
+  "services": [{
+    "name": "service-name",
+    "replicas": 3,
+    "shardSpec": null,
+    "containers": [{"image": "myapp:latest"}],
+    "ports": [{"number": 8080, "protocol": "TCP"}]
+  }],
+  "serve": {
+    "name": "service-name",
+    "public": true
+  }
+}
+```
+
+**Job Specification Structure:**
+```json
+{
+  "name": "job-name",
+  "guid": 1234567,
+  "jobs": [{
+    "name": "job-name",
+    "replicas": 10,
+    "containers": [{"image": "myapp:latest"}]
+  }]
+}
+```
+
+**Port Configuration:**
+- All ports use TCP protocol
+- Ports are exposed within the Kubernetes cluster
+- Public services get external load balancers when `public=True`
+
+## Differences from DockerRunner
+
+| Feature | DockerRunner | MetaparticleRunner |
+|---------|--------------|--------------------|
+| **Target** | Local Docker | Kubernetes Cluster |
+| **Replication** | Single container | Multiple replicas |
+| **Sharding** | Not supported | Supported |
+| **Jobs** | Not supported | Batch job support |
+| **Public Access** | Port mapping only | Load balancer support |
+| **Use Case** | Development/Testing | Production deployment |
+| **Complexity** | Simple | Advanced features |
+
+## See Also
+
+- [DockerRunner](/api/runners/docker-runner) - For local development
+- [RuntimeOptions](/api/runtime-options) - Configure the executor and runtime settings

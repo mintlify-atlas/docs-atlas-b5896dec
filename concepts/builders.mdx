@@ -1,0 +1,484 @@
+---
+title: "Builder System"
+description: "Understanding how Buildr's builder system creates and publishes container images"
+---
+
+## Overview
+
+The builder system is responsible for transforming your Dockerfile into a container image and optionally publishing it to a registry. Buildr uses a plugin-based architecture that allows different builder implementations.
+
+## Builder Selection
+
+Builders are selected using a factory pattern based on the `builder` parameter in package options:
+
+```python builder/__init__.py:4-7
+def select(spec):
+    if spec == 'docker':
+        return DockerBuilder()
+    raise Exception('Unknown spec {}'.format(spec))
+```
+
+<Info>
+  Currently, only the `docker` builder is implemented, but the architecture supports adding alternative builders (e.g., buildah, kaniko, buildkit).
+</Info>
+
+## DockerBuilder
+
+The `DockerBuilder` class uses the Docker Engine API to build and push images.
+
+### Implementation
+
+```python docker_builder.py:9-62
+class DockerBuilder:
+    def __init__(self):
+        self.docker_client = None
+
+    def build(self, img, path='.'):
+        if self.docker_client is None:
+            self.docker_client = APIClient(version='auto')
+
+        bld = self.docker_client.build(
+            path=path,
+            tag=img,
+            encoding='utf-8'
+        )
+
+        for line in bld:
+            self._process_stream(line)
+
+    def publish(self, img):
+        if self.docker_client is None:
+            self.docker_client = APIClient(version='auto')
+
+        # TODO: do we need to set tag?
+        for line in self.docker_client.push(img, stream=True):
+            self._process_stream(line)
+
+    def _process_stream(self, line):
+        ln = line.decode('utf-8').strip()
+
+        # try to decode json
+        try:
+            ljson = json.loads(ln)
+
+            if ljson.get('error'):
+                msg = str(ljson.get('error', ljson))
+                logger.error('Build failed: ' + msg)
+                raise Exception('Image build failed: ' + msg)
+            else:
+                if ljson.get('stream'):
+                    msg = 'Build output: {}'.format(ljson['stream'].strip())
+                elif ljson.get('status'):
+                    msg = 'Push output: {} {}'.format(
+                        ljson['status'],
+                        ljson.get('progress')
+                    )
+                elif ljson.get('aux'):
+                    msg = 'Push finished: {}'.format(ljson.get('aux'))
+                else:
+                    msg = str(ljson)
+
+                logger.debug(msg)
+
+        except json.JSONDecodeError:
+            logger.warning('JSON decode error: {}'.format(ln))
+```
+
+### Lazy Client Initialization
+
+```python docker_builder.py:10-11
+def __init__(self):
+    self.docker_client = None
+```
+
+The Docker client is initialized lazily (only when needed) rather than in `__init__`. This approach:
+
+- Avoids unnecessary Docker connections if builder isn't used
+- Defers connection errors until actual build time
+- Allows the builder to be instantiated without Docker installed (useful for testing)
+
+```python docker_builder.py:14-15
+if self.docker_client is None:
+    self.docker_client = APIClient(version='auto')
+```
+
+<Note>
+  `APIClient(version='auto')` automatically negotiates the API version with the Docker daemon, ensuring compatibility.
+</Note>
+
+## Building Images
+
+The `build()` method creates a Docker image from a Dockerfile:
+
+```python docker_builder.py:13-24
+def build(self, img, path='.'):
+    if self.docker_client is None:
+        self.docker_client = APIClient(version='auto')
+
+    bld = self.docker_client.build(
+        path=path,
+        tag=img,
+        encoding='utf-8'
+    )
+
+    for line in bld:
+        self._process_stream(line)
+```
+
+### Parameters
+
+<ParamField path="img" type="string" required>
+  The full image tag (e.g., `docker.io/myrepo/myapp:latest`)
+</ParamField>
+
+<ParamField path="path" type="string" default=".">
+  Build context path containing the Dockerfile
+</ParamField>
+
+### Build Process
+
+<Steps>
+  <Step title="Initialize Client">
+    Ensures Docker client is connected
+  </Step>
+  
+  <Step title="Invoke Docker Build">
+    Calls `docker_client.build()` with:
+    - `path`: Build context directory
+    - `tag`: Image name and tag
+    - `encoding`: UTF-8 for text output
+  </Step>
+  
+  <Step title="Stream Processing">
+    Iterates through build output stream, processing each line for errors and logging
+  </Step>
+</Steps>
+
+### Example Build Output
+
+```python
+# When you call:
+builder.build('myrepo/myapp:latest', '.')
+
+# Docker API returns streaming JSON:
+{"stream": "Step 1/4 : FROM python:3-alpine"}
+{"stream": " ---> abc123def456"}
+{"stream": "Step 2/4 : COPY ./ /app/"}
+{"stream": " ---> Using cache"}
+{"stream": "Step 3/4 : RUN pip install..."}
+{"stream": "Successfully built def456abc789"}
+{"stream": "Successfully tagged myrepo/myapp:latest"}
+```
+
+## Publishing Images
+
+The `publish()` method pushes the built image to a container registry:
+
+```python docker_builder.py:26-32
+def publish(self, img):
+    if self.docker_client is None:
+        self.docker_client = APIClient(version='auto')
+
+    # TODO: do we need to set tag?
+    for line in self.docker_client.push(img, stream=True):
+        self._process_stream(line)
+```
+
+<Tabs>
+  <Tab title="Usage">
+    ```python
+    @Containerize(
+        package={
+            'name': 'myapp',
+            'repository': 'docker.io/myrepo',
+            'publish': True  # Enable publishing
+        }
+    )
+    def main():
+        print('This will be pushed to the registry!')
+    ```
+  </Tab>
+  
+  <Tab title="Authentication">
+    Publishing requires Docker authentication. Before running, ensure you're logged in:
+    
+    ```bash
+    docker login docker.io
+    # or for other registries:
+    docker login gcr.io
+    docker login registry.example.com
+    ```
+    
+    The builder uses your existing Docker credentials from `~/.docker/config.json`.
+  </Tab>
+</Tabs>
+
+### Push Stream Format
+
+```json
+{"status": "The push refers to repository [docker.io/myrepo/myapp]"}
+{"status": "Preparing", "progressDetail": {}, "id": "abc123"}
+{"status": "Pushing", "progressDetail": {"current": 1024, "total": 4096}, "progress": "[==>  ] 1.024kB/4.096kB", "id": "abc123"}
+{"status": "Pushed", "progressDetail": {}, "id": "abc123"}
+{"aux": {"Tag": "latest", "Digest": "sha256:def456...", "Size": 12345}}
+```
+
+## Stream Processing
+
+The `_process_stream()` method handles Docker API output:
+
+```python docker_builder.py:34-61
+def _process_stream(self, line):
+    ln = line.decode('utf-8').strip()
+
+    # try to decode json
+    try:
+        ljson = json.loads(ln)
+
+        if ljson.get('error'):
+            msg = str(ljson.get('error', ljson))
+            logger.error('Build failed: ' + msg)
+            raise Exception('Image build failed: ' + msg)
+        else:
+            if ljson.get('stream'):
+                msg = 'Build output: {}'.format(ljson['stream'].strip())
+            elif ljson.get('status'):
+                msg = 'Push output: {} {}'.format(
+                    ljson['status'],
+                    ljson.get('progress')
+                )
+            elif ljson.get('aux'):
+                msg = 'Push finished: {}'.format(ljson.get('aux'))
+            else:
+                msg = str(ljson)
+
+            logger.debug(msg)
+
+    except json.JSONDecodeError:
+        logger.warning('JSON decode error: {}'.format(ln))
+```
+
+### Processing Logic
+
+<Steps>
+  <Step title="Decode Bytes to String">
+    Docker API returns bytes, decode to UTF-8 and strip whitespace
+  </Step>
+  
+  <Step title="Parse JSON">
+    Each line is a JSON object containing build/push status
+  </Step>
+  
+  <Step title="Error Handling">
+    If the JSON contains an `error` key, log and raise an exception to halt the build
+  </Step>
+  
+  <Step title="Log Categorization">
+    - `stream`: Build step output (logged at debug level)
+    - `status`: Push progress (logged with progress bar)
+    - `aux`: Final push metadata (logged when complete)
+  </Step>
+  
+  <Step title="Invalid JSON Handling">
+    If JSON parsing fails, log a warning and continue (non-fatal)
+  </Step>
+</Steps>
+
+<Accordion title="Error Detection Example">
+  When Docker encounters an error during build:
+  
+  ```json
+  {
+    "error": "Error: No such file or directory: requirements.txt",
+    "errorDetail": {
+      "message": "Error: No such file or directory: requirements.txt"
+    }
+  }
+  ```
+  
+  The builder will:
+  1. Extract the error message
+  2. Log: `Build failed: Error: No such file or directory: requirements.txt`
+  3. Raise: `Exception('Image build failed: ...')`
+  4. Stop the containerization process
+</Accordion>
+
+## Using the Builder
+
+The builder is automatically selected and invoked by the `Containerize` decorator:
+
+```python containerize.py:58-72
+# In Containerize.__init__:
+self.builder = builder.select(self.package.builder)
+
+# In Containerize.__call__:
+write_dockerfile(self.package, exec_file)
+self.builder.build(self.image)
+
+if self.package.publish:
+    self.builder.publish(self.image)
+```
+
+### Complete Flow
+
+```python
+from metaparticle_pkg import Containerize
+
+@Containerize(
+    package={
+        'name': 'demo',
+        'repository': 'myrepo',
+        'builder': 'docker',  # Selects DockerBuilder
+        'publish': True
+    }
+)
+def main():
+    print('Hello!')
+
+if __name__ == '__main__':
+    main()
+```
+
+<Steps>
+  <Step title="Builder Selection">
+    `builder.select('docker')` returns a `DockerBuilder` instance
+  </Step>
+  
+  <Step title="Dockerfile Generation">
+    `write_dockerfile()` creates `./Dockerfile`
+  </Step>
+  
+  <Step title="Image Build">
+    `builder.build('myrepo/demo:latest')` builds the image from current directory
+  </Step>
+  
+  <Step title="Image Push">
+    `builder.publish('myrepo/demo:latest')` pushes to the registry (if `publish: True`)
+  </Step>
+</Steps>
+
+## Logging
+
+The builder uses Python's logging module:
+
+```python docker_builder.py:6
+logger = logging.getLogger(__name__)
+```
+
+Log levels:
+
+| Level | When | Example |
+|-------|------|----------|
+| `ERROR` | Build/push fails | `Build failed: No such file: Dockerfile` |
+| `DEBUG` | Build/push progress | `Build output: Step 1/4 : FROM python:3` |
+| `WARNING` | Invalid JSON | `JSON decode error: invalid json` |
+
+<Info>
+  To see detailed build output, configure logging in your application:
+  
+  ```python
+  import logging
+  logging.basicConfig(level=logging.DEBUG)
+  ```
+</Info>
+
+## Docker API Client
+
+Buildr uses the low-level `docker.APIClient` instead of the high-level `docker.Client`:
+
+```python docker_builder.py:4
+from docker import APIClient
+```
+
+### Why APIClient?
+
+<CardGroup cols={2}>
+  <Card title="Streaming Support" icon="water">
+    `APIClient.build()` returns a stream generator, allowing real-time build output processing
+  </Card>
+  
+  <Card title="Fine-Grained Control" icon="sliders">
+    Direct access to Docker Engine API provides more control over build parameters
+  </Card>
+  
+  <Card title="Error Handling" icon="shield">
+    Stream-based approach allows catching and handling errors as they occur
+  </Card>
+  
+  <Card title="Version Negotiation" icon="handshake">
+    `version='auto'` automatically adapts to the Docker daemon's API version
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use .dockerignore">
+    Exclude unnecessary files to speed up builds:
+    
+    ```txt .dockerignore
+    __pycache__
+    *.pyc
+    .git
+    .venv
+    *.egg-info
+    .pytest_cache
+    ```
+    
+    This reduces the build context size sent to Docker daemon.
+  </Accordion>
+  
+  <Accordion title="Layer Caching">
+    Order Dockerfile commands from least to most frequently changing:
+    
+    ```dockerfile
+    FROM python:3-alpine
+    
+    # Dependencies change less often - cache this layer
+    COPY requirements.txt /app/
+    RUN pip install -r /app/requirements.txt
+    
+    # Code changes frequently - separate layer
+    COPY . /app/
+    
+    CMD python /app/main.py
+    ```
+  </Accordion>
+  
+  <Accordion title="Authentication">
+    For private registries, authenticate before running:
+    
+    ```bash
+    docker login your-registry.example.com
+    ```
+    
+    Or use environment variables:
+    ```bash
+    export DOCKER_CONFIG=/path/to/config
+    ```
+  </Accordion>
+  
+  <Accordion title="Error Handling">
+    Wrap containerization in try/except for production:
+    
+    ```python
+    try:
+        containerized_app()
+    except Exception as e:
+        logger.error(f'Containerization failed: {e}')
+        # Fallback to local execution
+        app()
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Runners" href="/concepts/runners" icon="play">
+    Learn how runners execute your containerized application
+  </Card>
+  <Card title="Architecture" href="/concepts/architecture" icon="diagram-project">
+    Understand the complete Buildr architecture
+  </Card>
+</CardGroup>

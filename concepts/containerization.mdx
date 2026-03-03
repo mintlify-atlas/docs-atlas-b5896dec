@@ -1,0 +1,368 @@
+---
+title: "Containerization Process"
+description: "Deep dive into how Buildr transforms your Python application into a containerized service"
+---
+
+## Overview
+
+Buildr's containerization process is designed to be completely transparent to your application code. The entire workflow is triggered by a simple decorator, but underneath it orchestrates Dockerfile generation, image building, and container execution.
+
+## Container Detection
+
+The first critical step in the containerization process is determining whether the code is already running inside a container. This prevents infinite recursion where a containerized app tries to containerize itself.
+
+### Detection Algorithm
+
+Buildr uses a multi-layered approach to detect container execution:
+
+```python containerize.py:11-30
+def is_in_docker_container():
+    mp_in_container = os.getenv('METAPARTICLE_IN_CONTAINER', None)
+    if mp_in_container in ['true', '1']:
+        return True
+    elif mp_in_container in ['false', '0']:
+        return False
+
+    try:
+        with open('/proc/1/cgroup', 'r+t') as f:
+            lines = f.read().splitlines()
+            last_line = lines[-1]
+            if 'docker' in last_line:
+                return True
+            elif 'kubepods' in last_line:
+                return True
+            else:
+                return False
+
+    except IOError:
+        return False
+```
+
+<Steps>
+  <Step title="Environment Variable Check">
+    First checks the `METAPARTICLE_IN_CONTAINER` environment variable:
+    - `true` or `1` → Running in container
+    - `false` or `0` → Not in container
+    - Not set → Continue to next check
+  </Step>
+  
+  <Step title="Cgroup Analysis">
+    Reads `/proc/1/cgroup` to inspect the init process's control group:
+    - Contains `docker` → Docker container
+    - Contains `kubepods` → Kubernetes pod
+    - Otherwise → Not containerized
+  </Step>
+  
+  <Step title="Fallback">
+    If `/proc/1/cgroup` doesn't exist (e.g., on macOS/Windows), assumes not in container
+  </Step>
+</Steps>
+
+<Note>
+  If `is_in_docker_container()` returns `True`, the decorated function executes normally without any containerization steps.
+</Note>
+
+## Dockerfile Generation
+
+When containerization is needed, Buildr generates a Dockerfile optimized for Python applications:
+
+### Auto-Generated Dockerfile
+
+```python containerize.py:33-45
+def write_dockerfile(package, exec_file):
+    if hasattr(package, 'dockerfile') and package.dockerfile is not None:
+        shutil.copy(package.dockerfile, 'Dockerfile')
+        return
+
+    with open('Dockerfile', 'w+t') as f:
+        f.write("""FROM python:{version}-alpine
+
+COPY ./ /app/
+RUN pip install --no-cache -r /app/requirements.txt
+
+CMD python /app/{exec_file}
+""".format(version=package.py_version, exec_file=exec_file))
+```
+
+### Dockerfile Structure
+
+The auto-generated Dockerfile follows best practices:
+
+<Accordion title="Base Image Selection">
+  ```dockerfile
+  FROM python:{version}-alpine
+  ```
+  
+  - Uses official Python Alpine Linux images for minimal size
+  - Version is controlled by `py_version` in package options (default: 3)
+  - Alpine variant reduces image size significantly
+</Accordion>
+
+<Accordion title="Application Copy">
+  ```dockerfile
+  COPY ./ /app/
+  ```
+  
+  - Copies the entire current directory to `/app/` in the container
+  - Includes your application code and `requirements.txt`
+  - Preserves directory structure
+</Accordion>
+
+<Accordion title="Dependency Installation">
+  ```dockerfile
+  RUN pip install --no-cache -r /app/requirements.txt
+  ```
+  
+  - Installs Python dependencies from `requirements.txt`
+  - Uses `--no-cache` to reduce image size
+  - Requires a `requirements.txt` file in your project root
+</Accordion>
+
+<Accordion title="Command Specification">
+  ```dockerfile
+  CMD python /app/{exec_file}
+  ```
+  
+  - Executes your Python script when the container starts
+  - `exec_file` is automatically determined from `sys.argv[0]`
+  - Runs as the container's main process (PID 1)
+</Accordion>
+
+### Custom Dockerfile
+
+You can provide your own Dockerfile for advanced use cases:
+
+```python
+@Containerize(
+    package={
+        'name': 'custom-app',
+        'repository': 'myrepo',
+        'dockerfile': './custom.Dockerfile'
+    }
+)
+def main():
+    print('Using custom Dockerfile!')
+```
+
+<Info>
+  When a custom Dockerfile is provided, Buildr copies it to `./Dockerfile` and uses it for the build. This allows you to:
+  - Use different base images
+  - Add custom build steps
+  - Include system dependencies
+  - Optimize layer caching
+</Info>
+
+## Executable Path Resolution
+
+Buildr automatically determines which Python file to execute in the container:
+
+```python containerize.py:66-69
+exec_file = sys.argv[0]
+slash_ix = exec_file.find('/')
+if slash_ix != -1:
+    exec_file = exec_file[slash_ix:]
+```
+
+<Tabs>
+  <Tab title="Direct Execution">
+    When you run `python app.py`:
+    - `sys.argv[0]` = `app.py`
+    - No slash found, uses `app.py` as-is
+    - Container CMD: `python /app/app.py`
+  </Tab>
+  
+  <Tab title="Path Execution">
+    When you run `python src/main.py`:
+    - `sys.argv[0]` = `src/main.py`
+    - Slash found at index 3
+    - Extracts path from slash: `/main.py`
+    - Container CMD: `python /app//main.py`
+  </Tab>
+</Tabs>
+
+## The Wrapper Function
+
+The `@Containerize` decorator wraps your function to intercept execution:
+
+```python containerize.py:62-85
+def __call__(self, func):
+    def wrapped(*args, **kwargs):
+        if is_in_docker_container():
+            return func(*args, **kwargs)
+
+        exec_file = sys.argv[0]
+        slash_ix = exec_file.find('/')
+        if slash_ix != -1:
+            exec_file = exec_file[slash_ix:]
+
+        write_dockerfile(self.package, exec_file)
+        self.builder.build(self.image)
+
+        if self.package.publish:
+            self.builder.publish(self.image)
+
+        def signal_handler(signal, frame):
+            self.runner.cancel(self.package.name)
+            sys.exit(0)
+        signal.signal(signal.SIGINT, signal_handler)
+
+        self.runner.run(self.image, self.package.name, self.runtime)
+
+        return self.runner.logs(self.package.name)
+    return wrapped
+```
+
+### Execution Flow
+
+<Steps>
+  <Step title="Container Check">
+    First line checks if already in container - if yes, calls original function
+  </Step>
+  
+  <Step title="Path Resolution">
+    Determines the executable file path for the Dockerfile CMD
+  </Step>
+  
+  <Step title="Dockerfile Creation">
+    Generates or copies the Dockerfile to current directory
+  </Step>
+  
+  <Step title="Image Build">
+    Delegates to the builder to create the container image
+  </Step>
+  
+  <Step title="Optional Publish">
+    If configured, pushes the image to the registry
+  </Step>
+  
+  <Step title="Signal Handling">
+    Sets up Ctrl+C handler for graceful shutdown
+  </Step>
+  
+  <Step title="Container Run">
+    Starts the container with the runner
+  </Step>
+  
+  <Step title="Log Streaming">
+    Streams container output to console and returns
+  </Step>
+</Steps>
+
+## Signal Handling
+
+Buildr provides graceful shutdown when you press Ctrl+C:
+
+```python containerize.py:77-80
+def signal_handler(signal, frame):
+    self.runner.cancel(self.package.name)
+    sys.exit(0)
+signal.signal(signal.SIGINT, signal_handler)
+```
+
+When `SIGINT` is received:
+1. Runner's `cancel()` method is called to stop the container
+2. Python process exits cleanly with code 0
+
+<Warning>
+  The signal handler is registered before the container starts, ensuring you can always interrupt the containerization process.
+</Warning>
+
+## Complete Example
+
+Here's how all the pieces work together:
+
+```python example.py
+from metaparticle_pkg import Containerize
+import time
+
+@Containerize(
+    package={'name': 'hello-world', 'repository': 'myrepo'},
+    runtime={'ports': [8080]}
+)
+def main():
+    print('Hello from container!')
+    for i in range(10):
+        print(f'Tick {i}')
+        time.sleep(1)
+
+if __name__ == '__main__':
+    main()
+```
+
+### Execution Trace
+
+<CodeGroup>
+```bash First Run (Not in Container)
+$ python example.py
+
+# Buildr detects: not in container
+# Generates Dockerfile:
+FROM python:3-alpine
+COPY ./ /app/
+RUN pip install --no-cache -r /app/requirements.txt
+CMD python /app/example.py
+
+# Builds image: myrepo/hello-world:latest
+# Starts container with port 8080 exposed
+# Streams logs:
+Hello from container!
+Tick 0
+Tick 1
+...
+```
+
+```bash Second Run (In Container)
+# Inside the container, Python runs:
+$ python /app/example.py
+
+# Buildr detects: in container (via /proc/1/cgroup)
+# Skips containerization, runs function directly:
+Hello from container!
+Tick 0
+Tick 1
+...
+```
+</CodeGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Always Include requirements.txt" icon="file">
+    The auto-generated Dockerfile expects `requirements.txt` in your project root. Include all dependencies, even if just:
+    ```txt
+    # Empty requirements.txt
+    ```
+  </Card>
+  
+  <Card title="Use .dockerignore" icon="filter">
+    Exclude unnecessary files to speed up builds:
+    ```txt
+    __pycache__
+    *.pyc
+    .git
+    .env
+    ```
+  </Card>
+  
+  <Card title="Pin Python Version" icon="thumbtack">
+    Specify `py_version` for reproducible builds:
+    ```python
+    package={'py_version': 3.9}
+    ```
+  </Card>
+  
+  <Card title="Test Locally First" icon="flask">
+    Run your code without containerization before adding the decorator to catch issues early
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Builders" href="/concepts/builders" icon="hammer">
+    Learn how DockerBuilder creates images
+  </Card>
+  <Card title="Runners" href="/concepts/runners" icon="play">
+    Explore execution environments
+  </Card>
+</CardGroup>

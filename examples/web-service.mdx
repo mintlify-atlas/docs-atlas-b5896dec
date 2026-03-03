@@ -1,0 +1,275 @@
+---
+title: 'Web Service'
+description: 'Deploy a scalable web service with automatic containerization'
+---
+
+## Overview
+
+This example shows how to containerize and deploy a web service using Buildr. You'll learn how to expose ports, configure replicas for scaling, and make your service publicly accessible.
+
+## Complete Example
+
+Here's a complete HTTP server that's automatically containerized and deployed:
+
+```python
+#!/usr/bin/python
+
+from six.moves import SimpleHTTPServer, socketserver
+import socket
+from metaparticle_pkg.containerize import Containerize
+
+OK = 200
+
+port = 8080
+
+
+class MyHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(OK)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write("Hello Metaparticle [{}] @ {}\n".format(self.path, socket.gethostname()).encode('UTF-8'))
+        print("request for {}".format(self.path))
+
+    def do_HEAD(self):
+        self.send_response(OK)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+
+
+@Containerize(
+    package={'name': 'web', 'repository': 'docker.io/brendanburns'},
+    runtime={'ports': [8080], 'executor': 'metaparticle', 'replicas': 3, 'public': True}
+)
+def main():
+    Handler = MyHandler
+    httpd = socketserver.TCPServer(("", port), Handler)
+    httpd.serve_forever()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+## Step-by-Step Breakdown
+
+<Steps>
+  <Step title="Import dependencies">
+    ```python
+    from six.moves import SimpleHTTPServer, socketserver
+    import socket
+    from metaparticle_pkg.containerize import Containerize
+    ```
+    
+    - **SimpleHTTPServer**: Basic HTTP server implementation
+    - **socketserver**: TCP server framework
+    - **socket**: For getting hostname information
+    - **Containerize**: Buildr decorator for containerization
+  </Step>
+
+  <Step title="Create HTTP request handler">
+    ```python
+    class MyHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(OK)
+            self.send_header("Content-type", "text/plain")
+            self.end_headers()
+            self.wfile.write("Hello Metaparticle [{}] @ {}\n".format(
+                self.path, socket.gethostname()).encode('UTF-8'))
+            print("request for {}".format(self.path))
+    ```
+    
+    Custom handler that:
+    - Responds to GET requests with a 200 OK status
+    - Returns the requested path and hostname
+    - Shows which container instance handled the request
+    
+    <Tip>
+      The hostname in the response helps you see load balancing across replicas in action!
+    </Tip>
+  </Step>
+
+  <Step title="Configure containerization with scaling">
+    ```python
+    @Containerize(
+        package={'name': 'web', 'repository': 'docker.io/brendanburns'},
+        runtime={
+            'ports': [8080], 
+            'executor': 'metaparticle', 
+            'replicas': 3, 
+            'public': True
+        }
+    )
+    def main():
+        Handler = MyHandler
+        httpd = socketserver.TCPServer(("", port), Handler)
+        httpd.serve_forever()
+    ```
+    
+    This configuration does several important things:
+    
+    **Package Configuration:**
+    - **name**: `'web'` - The container image name
+    - **repository**: `'docker.io/brendanburns'` - Docker Hub repository
+    
+    **Runtime Configuration:**
+    - **ports**: `[8080]` - Exposes port 8080 for HTTP traffic
+    - **executor**: `'metaparticle'` - Uses Metaparticle runtime for orchestration
+    - **replicas**: `3` - Runs 3 instances of the service for load balancing
+    - **public**: `True` - Makes the service accessible from outside the cluster
+  </Step>
+
+  <Step title="Start the server">
+    ```python
+    if __name__ == '__main__':
+        main()
+    ```
+    
+    When executed, Buildr will:
+    1. Build a Docker image containing your web service
+    2. Deploy 3 replicas to the Metaparticle runtime
+    3. Configure load balancing across all replicas
+    4. Expose the service publicly on port 8080
+  </Step>
+</Steps>
+
+## Configuration Options Explained
+
+### Package Options
+
+| Option | Type | Description | Example |
+|--------|------|-------------|----------|
+| `name` | string | Service/image name | `'web'` |
+| `repository` | string | Docker registry repository | `'docker.io/yourusername'` |
+
+### Runtime Options
+
+| Option | Type | Description | Default |
+|--------|------|-------------|----------|
+| `ports` | array | Ports to expose | `[]` |
+| `executor` | string | Runtime executor (`docker`, `metaparticle`) | `'docker'` |
+| `replicas` | number | Number of instances to run | `1` |
+| `public` | boolean | Make service publicly accessible | `false` |
+
+<Note>
+  The `metaparticle` executor provides orchestration features like replicas and load balancing. Use `docker` executor for simple local testing.
+</Note>
+
+## Running the Example
+
+<Steps>
+  <Step title="Save the code">
+    Save the example to `web.py`
+  </Step>
+
+  <Step title="Create requirements.txt">
+    ```txt
+    metaparticle-pkg
+    six
+    ```
+  </Step>
+
+  <Step title="Run the service">
+    ```bash
+    python web.py
+    ```
+    
+    Buildr will build, deploy, and start your service with 3 replicas.
+  </Step>
+
+  <Step title="Test the service">
+    ```bash
+    curl http://localhost:8080/hello
+    ```
+    
+    You'll see responses from different container instances:
+    ```
+    Hello Metaparticle [/hello] @ web-abc123
+    Hello Metaparticle [/hello] @ web-def456
+    Hello Metaparticle [/hello] @ web-ghi789
+    ```
+  </Step>
+</Steps>
+
+## Scaling Your Service
+
+Buildr makes it easy to scale your web service by adjusting the `replicas` configuration:
+
+```python
+# Single instance for development
+runtime={'replicas': 1, 'public': False}
+
+# 3 replicas for production
+runtime={'replicas': 3, 'public': True}
+
+# High availability with 10 replicas
+runtime={'replicas': 10, 'public': True}
+```
+
+<Tip>
+  Start with fewer replicas during development and increase them in production based on your traffic patterns and performance requirements.
+</Tip>
+
+## Load Balancing
+
+When you set `replicas > 1`, Buildr automatically:
+
+1. **Distributes traffic** across all container instances
+2. **Health checks** each replica to ensure availability
+3. **Routes requests** to healthy instances only
+4. **Balances load** using round-robin or other algorithms
+
+## Public vs Private Services
+
+### Public Service (`public: True`)
+- Accessible from the internet
+- Gets an external IP or load balancer
+- Suitable for customer-facing applications
+
+### Private Service (`public: False`)
+- Only accessible within the cluster
+- No external exposure
+- Suitable for internal microservices
+
+```python
+# Public-facing API
+@Containerize(
+    package={'name': 'api', 'repository': 'myrepo'},
+    runtime={'ports': [80], 'public': True, 'replicas': 5}
+)
+
+# Internal service
+@Containerize(
+    package={'name': 'worker', 'repository': 'myrepo'},
+    runtime={'public': False, 'replicas': 2}
+)
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Use appropriate replica counts">
+    - Development: 1 replica
+    - Staging: 2-3 replicas
+    - Production: 3+ replicas (odd numbers for quorum-based systems)
+  </Step>
+
+  <Step title="Configure health checks">
+    Implement health check endpoints:
+    ```python
+    def do_GET(self):
+        if self.path == '/health':
+            self.send_response(200)
+            self.end_headers()
+            return
+        # ... normal request handling
+    ```
+  </Step>
+
+  <Step title="Use environment-specific repositories">
+    ```python
+    import os
+    repo = os.getenv('DOCKER_REPO', 'docker.io/myuser')
+    ```
+  </Step>
+</Steps>
